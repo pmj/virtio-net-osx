@@ -1,0 +1,281 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 46;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		299F18F313DC183D000200A5 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 299F18F113DC183D000200A5 /* InfoPlist.strings */; };
+		299F18F613DC183D000200A5 /* virtio_net.h in Headers */ = {isa = PBXBuildFile; fileRef = 299F18F513DC183D000200A5 /* virtio_net.h */; };
+		299F18F813DC183D000200A5 /* virtio_net.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 299F18F713DC183D000200A5 /* virtio_net.cpp */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		299F18E913DC183D000200A5 /* virtio-net.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "virtio-net.kext"; sourceTree = BUILT_PRODUCTS_DIR; };
+		299F18ED13DC183D000200A5 /* Kernel.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Kernel.framework; path = System/Library/Frameworks/Kernel.framework; sourceTree = SDKROOT; };
+		299F18F013DC183D000200A5 /* virtio-net-Info.plist */ = {isa = PBXFileReference; path = "virtio-net-Info.plist"; sourceTree = "<group>"; };
+		299F18F213DC183D000200A5 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		299F18F413DC183D000200A5 /* virtio-net-Prefix.pch */ = {isa = PBXFileReference; path = "virtio-net-Prefix.pch"; sourceTree = "<group>"; };
+		299F18F513DC183D000200A5 /* virtio_net.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = virtio_net.h; sourceTree = "<group>"; };
+		299F18F713DC183D000200A5 /* virtio_net.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = virtio_net.cpp; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		299F18E413DC183D000200A5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		299F18DC13DC183D000200A5 = {
+			isa = PBXGroup;
+			children = (
+				299F18EE13DC183D000200A5 /* virtio-net */,
+				299F18EB13DC183D000200A5 /* Frameworks */,
+				299F18EA13DC183D000200A5 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		299F18EA13DC183D000200A5 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				299F18E913DC183D000200A5 /* virtio-net.kext */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		299F18EB13DC183D000200A5 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				299F18EC13DC183D000200A5 /* Other Frameworks */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		299F18EC13DC183D000200A5 /* Other Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				299F18ED13DC183D000200A5 /* Kernel.framework */,
+			);
+			name = "Other Frameworks";
+			sourceTree = "<group>";
+		};
+		299F18EE13DC183D000200A5 /* virtio-net */ = {
+			isa = PBXGroup;
+			children = (
+				299F18F513DC183D000200A5 /* virtio_net.h */,
+				299F18F713DC183D000200A5 /* virtio_net.cpp */,
+				299F18EF13DC183D000200A5 /* Supporting Files */,
+			);
+			path = "virtio-net";
+			sourceTree = "<group>";
+		};
+		299F18EF13DC183D000200A5 /* Supporting Files */ = {
+			isa = PBXGroup;
+			children = (
+				299F18F013DC183D000200A5 /* virtio-net-Info.plist */,
+				299F18F113DC183D000200A5 /* InfoPlist.strings */,
+				299F18F413DC183D000200A5 /* virtio-net-Prefix.pch */,
+			);
+			name = "Supporting Files";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXHeadersBuildPhase section */
+		299F18E513DC183D000200A5 /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				299F18F613DC183D000200A5 /* virtio_net.h in Headers */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXHeadersBuildPhase section */
+
+/* Begin PBXNativeTarget section */
+		299F18E813DC183D000200A5 /* virtio-net */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 299F18FB13DC183D000200A5 /* Build configuration list for PBXNativeTarget "virtio-net" */;
+			buildPhases = (
+				299F18E313DC183D000200A5 /* Sources */,
+				299F18E413DC183D000200A5 /* Frameworks */,
+				299F18E513DC183D000200A5 /* Headers */,
+				299F18E613DC183D000200A5 /* Resources */,
+				299F18E713DC183D000200A5 /* Rez */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "virtio-net";
+			productName = "virtio-net";
+			productReference = 299F18E913DC183D000200A5 /* virtio-net.kext */;
+			productType = "com.apple.product-type.kernel-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		299F18DE13DC183D000200A5 /* Project object */ = {
+			isa = PBXProject;
+			buildConfigurationList = 299F18E113DC183D000200A5 /* Build configuration list for PBXProject "virtio-net" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = English;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+			);
+			mainGroup = 299F18DC13DC183D000200A5;
+			productRefGroup = 299F18EA13DC183D000200A5 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				299F18E813DC183D000200A5 /* virtio-net */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		299F18E613DC183D000200A5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				299F18F313DC183D000200A5 /* InfoPlist.strings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXRezBuildPhase section */
+		299F18E713DC183D000200A5 /* Rez */ = {
+			isa = PBXRezBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXRezBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		299F18E313DC183D000200A5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				299F18F813DC183D000200A5 /* virtio_net.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXVariantGroup section */
+		299F18F113DC183D000200A5 /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				299F18F213DC183D000200A5 /* en */,
+			);
+			name = InfoPlist.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		299F18F913DC183D000200A5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = DEBUG;
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 10.6;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		299F18FA13DC183D000200A5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = "$(ARCHS_STANDARD_32_64_BIT)";
+				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 10.6;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		299F18FC13DC183D000200A5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1.0.0d1;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_ENABLE_OBJC_EXCEPTIONS = YES;
+				GCC_PRECOMPILE_PREFIX_HEADER = YES;
+				GCC_PREFIX_HEADER = "virtio-net/virtio-net-Prefix.pch";
+				GCC_VERSION = com.apple.compilers.llvmgcc42;
+				INFOPLIST_FILE = "virtio-net/virtio-net-Info.plist";
+				MODULE_NAME = eu.philjordan.virtio_net;
+				MODULE_VERSION = 1.0.0d1;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Debug;
+		};
+		299F18FD13DC183D000200A5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				COPY_PHASE_STRIP = YES;
+				CURRENT_PROJECT_VERSION = 1.0.0d1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_ENABLE_OBJC_EXCEPTIONS = YES;
+				GCC_PRECOMPILE_PREFIX_HEADER = YES;
+				GCC_PREFIX_HEADER = "virtio-net/virtio-net-Prefix.pch";
+				GCC_VERSION = com.apple.compilers.llvmgcc42;
+				INFOPLIST_FILE = "virtio-net/virtio-net-Info.plist";
+				MODULE_NAME = eu.philjordan.virtio_net;
+				MODULE_VERSION = 1.0.0d1;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		299F18E113DC183D000200A5 /* Build configuration list for PBXProject "virtio-net" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				299F18F913DC183D000200A5 /* Debug */,
+				299F18FA13DC183D000200A5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		299F18FB13DC183D000200A5 /* Build configuration list for PBXNativeTarget "virtio-net" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				299F18FC13DC183D000200A5 /* Debug */,
+				299F18FD13DC183D000200A5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 299F18DE13DC183D000200A5 /* Project object */;
+}
