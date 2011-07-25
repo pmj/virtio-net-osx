@@ -10,16 +10,18 @@
 		299F18F313DC183D000200A5 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 299F18F113DC183D000200A5 /* InfoPlist.strings */; };
 		299F18F613DC183D000200A5 /* virtio_net.h in Headers */ = {isa = PBXBuildFile; fileRef = 299F18F513DC183D000200A5 /* virtio_net.h */; };
 		299F18F813DC183D000200A5 /* virtio_net.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 299F18F713DC183D000200A5 /* virtio_net.cpp */; };
+		29CD526E13DD86D40062DAA6 /* readme.md in Resources */ = {isa = PBXBuildFile; fileRef = 29CD526D13DD86D40062DAA6 /* readme.md */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		299F18E913DC183D000200A5 /* virtio-net.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "virtio-net.kext"; sourceTree = BUILT_PRODUCTS_DIR; };
 		299F18ED13DC183D000200A5 /* Kernel.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Kernel.framework; path = System/Library/Frameworks/Kernel.framework; sourceTree = SDKROOT; };
-		299F18F013DC183D000200A5 /* virtio-net-Info.plist */ = {isa = PBXFileReference; path = "virtio-net-Info.plist"; sourceTree = "<group>"; };
+		299F18F013DC183D000200A5 /* virtio-net-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "virtio-net-Info.plist"; sourceTree = "<group>"; };
 		299F18F213DC183D000200A5 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
-		299F18F413DC183D000200A5 /* virtio-net-Prefix.pch */ = {isa = PBXFileReference; path = "virtio-net-Prefix.pch"; sourceTree = "<group>"; };
+		299F18F413DC183D000200A5 /* virtio-net-Prefix.pch */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "virtio-net-Prefix.pch"; sourceTree = "<group>"; };
 		299F18F513DC183D000200A5 /* virtio_net.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = virtio_net.h; sourceTree = "<group>"; };
 		299F18F713DC183D000200A5 /* virtio_net.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = virtio_net.cpp; sourceTree = "<group>"; };
+		29CD526D13DD86D40062DAA6 /* readme.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = readme.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -72,6 +74,7 @@
 				299F18F513DC183D000200A5 /* virtio_net.h */,
 				299F18F713DC183D000200A5 /* virtio_net.cpp */,
 				299F18EF13DC183D000200A5 /* Supporting Files */,
+				29CD526D13DD86D40062DAA6 /* readme.md */,
 			);
 			path = "virtio-net";
 			sourceTree = "<group>";
@@ -147,6 +150,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				299F18F313DC183D000200A5 /* InfoPlist.strings in Resources */,
+				29CD526E13DD86D40062DAA6 /* readme.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -274,6 +278,7 @@
 				299F18FD13DC183D000200A5 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};
