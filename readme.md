@@ -68,8 +68,8 @@ with the older SDKs.
 I'm making the source code for this driver available under both the [zLib license][zlib]
 and the the [3-clause BSD license][bsd3].
 
-virtio: http://ozlabs.org/~rusty/virtio-spec/
+[virtio]: http://ozlabs.org/~rusty/virtio-spec/
 
-bsd3: http://www.opensource.org/licenses/BSD-3-Clause
+[bsd3]: http://www.opensource.org/licenses/BSD-3-Clause
 
-zlib: http://www.opensource.org/licenses/zLib
+[zlib]: http://www.opensource.org/licenses/zLib

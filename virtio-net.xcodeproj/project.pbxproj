@@ -21,7 +21,7 @@
 		299F18F413DC183D000200A5 /* virtio-net-Prefix.pch */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "virtio-net-Prefix.pch"; sourceTree = "<group>"; };
 		299F18F513DC183D000200A5 /* virtio_net.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = virtio_net.h; sourceTree = "<group>"; };
 		299F18F713DC183D000200A5 /* virtio_net.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = virtio_net.cpp; sourceTree = "<group>"; };
-		29CD526D13DD86D40062DAA6 /* readme.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = readme.md; sourceTree = "<group>"; };
+		29CD526D13DD86D40062DAA6 /* readme.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; name = readme.md; path = ../readme.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
