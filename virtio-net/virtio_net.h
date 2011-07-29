@@ -6,6 +6,7 @@
 
 #include <IOKit/network/IOEthernetController.h>
 
+class IOBufferMemoryDescriptor;
 class eu_philjordan_virtio_net : public IOEthernetController
 {
 	OSDeclareDefaultStructors(eu_philjordan_virtio_net);
@@ -21,12 +22,15 @@ public:
 	 * up an ethernet interface.
 	 */
 	virtual bool start(IOService* provider);
+	virtual void stop(IOService* provider);
 	
 	/// Destructor, frees internal state
 	virtual void free();
 	
 	virtual IOReturn getHardwareAddress(IOEthernetAddress* addrP);
 
+protected:
+	IOBufferMemoryDescriptor* rx_queue;
 };
 
 #endif

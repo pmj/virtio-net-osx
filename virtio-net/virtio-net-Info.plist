@@ -4,8 +4,6 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
-	<key>OSBundleRequired</key>
-	<string>Network-Root</string>
 	<key>CFBundleExecutable</key>
 	<string>${EXECUTABLE_NAME}</string>
 	<key>CFBundleIconFile</key>
@@ -28,21 +26,21 @@
 	<dict>
 		<key>VirtioNet</key>
 		<dict>
-			<key>IOPCIPrimaryMatch</key>
-			<string>0x10001AF4&amp;0xffc0ffff</string>
+			<key>CFBundleIdentifier</key>
+			<string>eu.philjordan.virtio-net</string>
+			<key>IOClass</key>
+			<string>eu_philjordan_virtio_net</string>
 			<key>IOPCIClassMatch</key>
 			<string>0x02000000&amp;0xffff0000</string>
+			<key>IOPCIPrimaryMatch</key>
+			<string>0x10001AF4&amp;0xffc0ffff</string>
+			<key>IOProviderClass</key>
+			<string>IOPCIDevice</string>
 			<key>VirtioNetDriverParams</key>
 			<dict>
 				<key>Test</key>
 				<integer>100</integer>
 			</dict>
-			<key>IOClass</key>
-			<string>eu_philjordan_virtio_net</string>
-			<key>IOProviderClass</key>
-			<string>IOPCIDevice</string>
-			<key>CFBundleIdentifier</key>
-			<string>eu.philjordan.virtio-net</string>
 		</dict>
 	</dict>
 	<key>NSHumanReadableCopyright</key>
@@ -51,12 +49,16 @@
 	<dict>
 		<key>com.apple.iokit.IONetworkingFamily</key>
 		<string>1.4.3</string>
-		<key>com.apple.kpi.iokit</key>
-		<string>8.0.0b2</string>
 		<key>com.apple.iokit.IOPCIFamily</key>
 		<string>1.6</string>
+		<key>com.apple.kpi.iokit</key>
+		<string>9.0.0</string>
 		<key>com.apple.kpi.libkern</key>
-		<string>8.0.0b2</string>
+		<string>9.0.0</string>
+		<key>com.apple.kpi.mach</key>
+		<string>9.0.0</string>
 	</dict>
+	<key>OSBundleRequired</key>
+	<string>Network-Root</string>
 </dict>
 </plist>

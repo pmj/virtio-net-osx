@@ -3,6 +3,17 @@
 
 #include "virtio_net.h"
 #include <IOKit/pci/IOPCIDevice.h>
+#include "virtio_ring.h"
+#include <IOKit/IOBufferMemoryDescriptor.h>
+#include <kern/task.h>
+
+// darwin doesn't have inttypes.h TODO: build an inttypes.h for the kernel
+#ifndef PRIuPTR
+#define PRIuPTR "%lu"
+#endif
+#ifndef PRIX64
+#define PRIX64 "%llX"
+#endif
 
 OSDefineMetaClassAndStructors(eu_philjordan_virtio_net, IOEthernetController);
 #define super IOEthernetController
@@ -10,7 +21,12 @@ OSDefineMetaClassAndStructors(eu_philjordan_virtio_net, IOEthernetController);
 bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 {
 	IOLog("virtio-net init()\n");
-	return super::init(properties);
+	bool ok = super::init(properties);
+	if (!ok)
+		return false;
+	
+	rx_queue = NULL;
+	return true;
 }
 
 static int64_t pci_id_data_to_uint(OSObject* property_obj)
@@ -179,6 +195,19 @@ static void log_feature(uint32_t feature_bitmap, uint32_t feature, const char* f
 	}
 }
 
+
+/// Virtqueue size calculation, see section 2.3 in virtio spec
+static const size_t VIRTIO_PAGE_SIZE = 4096;
+static inline size_t virtio_page_align(size_t size)
+{
+	return (size + VIRTIO_PAGE_SIZE - 1u) & ~(VIRTIO_PAGE_SIZE - 1u);
+}
+static inline size_t vring_size(size_t qsz)
+{
+	return virtio_page_align(sizeof(vring_desc) * qsz + sizeof(uint16_t) * (2 + qsz))
+		+ virtio_page_align(sizeof(vring_used_elem) * qsz);
+}
+
 #define LOG_FEATURE(FEATURES, FEATURE) \
 log_feature(FEATURES, FEATURE, #FEATURE)
 
@@ -231,48 +260,130 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	uint32_t dev_features = OSSwapLittleToHostInt32(pci->ioRead32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31, iomap));
 	IOLog("virtio-net start(): Device reports LOW feature bitmap 0x%08x.\n", dev_features);
 	IOLog("virtio-net start(): Recognised generic virtio features:\n");
-	LOG_FEATURE(dev_features, VIRTIO_F_NOTIFY_ON_EMPTY);
+	LOG_FEATURE(dev_features, VIRTIO_F_NOTIFY_ON_EMPTY);    // Supported by VBox 4.1.0
 	LOG_FEATURE(dev_features, VIRTIO_F_RING_INDIRECT_DESC);
 	LOG_FEATURE(dev_features, VIRTIO_F_RING_EVENT_IDX);
-	LOG_FEATURE(dev_features, VIRTIO_F_BAD_FEATURE);
+	LOG_FEATURE(dev_features, VIRTIO_F_BAD_FEATURE);        // Must mask this out
 	LOG_FEATURE(dev_features, VIRTIO_F_FEATURES_HIGH);
 	
 	IOLog("virtio-net start(): Recognised virtio-net specific features:\n");
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_CSUM);
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_CSUM);           // Supported by VBox 4.1.0
 	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_CSUM);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_MAC);
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_MAC);            // Supported by VBox 4.1.0
 	LOG_FEATURE(dev_features, VIRTIO_NET_F_GSO);
 	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_TSO4);
 	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_TSO6);
 	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_ECN);
 	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_UFO);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_TSO4);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_TSO6);
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_TSO4);      // Supported by VBox 4.1.0
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_TSO6);      // Supported by VBox 4.1.0
 	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_ECN);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_UFO);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_MRG_RXBUF);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_STATUS);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_CTRL_VQ);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_CTRL_RX);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_CTRL_VLAN);
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_UFO);       // Supported by VBox 4.1.0
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_MRG_RXBUF);      // Supported by VBox 4.1.0
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_STATUS);         // Supported by VBox 4.1.0
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_CTRL_VQ);        // Supported by VBox 4.1.0
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_CTRL_RX);        // Supported by VBox 4.1.0
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_CTRL_VLAN);      // Supported by VBox 4.1.0
+	
+	
+	uint32_t unrecognised = dev_features & ~static_cast<uint32_t>(VIRTIO_ALL_KNOWN_FEATURES);
+	if (unrecognised > 0)
+	{
+		IOLog("Feature bits not recognised by this driver: 0x%08x\n", unrecognised);
+	}
+	
+	/* Read out the flexible config space */
+	size_t config_offset = VIRTIO_PCI_CONF_OFFSET_END_HEADER;
 
-	IOLog("Features not recognised by this driver: 0x%08x\n",
-		dev_features & ~static_cast<uint32_t>(VIRTIO_ALL_KNOWN_FEATURES));
+#warning TODO: find out how to detect if MSI-X is enabled (I don't think it ever is on Mac OS X)
+	// if (msix_enabled) config_offset += 4;
 	
-	iomap->release();
+	ssize_t hi_features_offset = -1;
+	if (dev_features & VIRTIO_F_FEATURES_HIGH)
+	{
+		// Has extended feature table
+		hi_features_offset = config_offset;
+		config_offset += 2 * 4;
+	}
 	
-	return true;
+	// offset for the device-specific configuration space
+	size_t device_specific_offset = config_offset;
+	
+	{
+		/* virtqueues must be aligned to 4096 bytes (last 12 bits 0) and the shifted
+		 * address will be written to a 32-bit register 
+		 */
+		const mach_vm_address_t VIRTIO_RING_ALLOC_MASK = 0xffffffffull << 12u;
+		// detect and allocate virtqueues - expect 2 plus 1 if VIRTIO_NET_F_CTRL_VQ is set
+		// queue 0 is receive queue (Appendix C, Configuration)
+		// queue 1 is transmit queue
+		// queue 2 is control queue (if present)
+		pci->ioWrite16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SELECT, 0, iomap);
+		uint16_t queue_size = pci->ioRead16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SIZE, iomap);
+#warning TODO: check queue size for sanity (>0, pow2, minimum sensible size)
+		if (queue_size == 0)
+		{
+			IOLog("Queue size for queue 0 is 0.\n");
+			goto fail;
+		}
+		IOLog("Reported queue size for rx queue: %u\n", queue_size);
+		// allocate an appropriately sized DMA buffer. As per the spec, this must be physically contiguous.
+		size_t queue_size_bytes = vring_size(queue_size);
+		IOBufferMemoryDescriptor* rx_queue_buffer = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+			kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
+		if (!rx_queue_buffer)
+		{
+			IOLog("Failed to allocate queue buffer with " PRIuPTR " contiguous bytes and mask " PRIX64 ".\n",
+				queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
+			goto fail;
+		}
+		memset(rx_queue_buffer->getBytesNoCopy(), 0, queue_size_bytes);
+		pci->ioWrite32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, rx_queue_buffer->getPhysicalAddress() >> 12u);
+		
+		iomap->release();
+		
+		IOLog("Initialised virtqueue 0 (receive queue) with " PRIuPTR " bytes at " PRIX64 "\n", queue_size_bytes, rx_queue_buffer->getPhysicalAddress());
+		
+		this->rx_queue = rx_queue_buffer;
+		return true;
+	}
+fail:
+	if (pci && iomap)
+	{
+		pci->ioWrite8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, status | VIRTIO_PCI_DEVICE_STATUS_FAILED, iomap);
+		iomap->release();
+	}
+	return false;
+}
+
+void eu_philjordan_virtio_net::stop(IOService* provider)
+{
+	IOLog("virtio-net stop()\n");
+	if (this->rx_queue)
+	{
+		this->rx_queue->release();
+		this->rx_queue = NULL;
+		IOLog("Released rx queue\n");
+	}
 }
 
 void eu_philjordan_virtio_net::free()
 {
 	IOLog("virtio-net free()\n");
+
+	if (this->rx_queue)
+	{
+		this->rx_queue->release();
+		this->rx_queue = NULL;
+		IOLog("Released rx queue\n");
+	}
+
 	super::free();
 }
 
 
 IOReturn eu_philjordan_virtio_net::getHardwareAddress(IOEthernetAddress* addrP)
 {
-	int TODO;
+#warning TODO
 	return kIOReturnError;
 }

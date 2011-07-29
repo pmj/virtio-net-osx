@@ -10,6 +10,7 @@
 		299F18F313DC183D000200A5 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 299F18F113DC183D000200A5 /* InfoPlist.strings */; };
 		299F18F613DC183D000200A5 /* virtio_net.h in Headers */ = {isa = PBXBuildFile; fileRef = 299F18F513DC183D000200A5 /* virtio_net.h */; };
 		299F18F813DC183D000200A5 /* virtio_net.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 299F18F713DC183D000200A5 /* virtio_net.cpp */; };
+		29A7E26213E2DC0B00E33939 /* virtio_ring.h in Headers */ = {isa = PBXBuildFile; fileRef = 29A7E26113E2DC0B00E33939 /* virtio_ring.h */; };
 		29CD526E13DD86D40062DAA6 /* readme.md in Resources */ = {isa = PBXBuildFile; fileRef = 29CD526D13DD86D40062DAA6 /* readme.md */; };
 /* End PBXBuildFile section */
 
@@ -21,6 +22,7 @@
 		299F18F413DC183D000200A5 /* virtio-net-Prefix.pch */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "virtio-net-Prefix.pch"; sourceTree = "<group>"; };
 		299F18F513DC183D000200A5 /* virtio_net.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = virtio_net.h; sourceTree = "<group>"; };
 		299F18F713DC183D000200A5 /* virtio_net.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = virtio_net.cpp; sourceTree = "<group>"; };
+		29A7E26113E2DC0B00E33939 /* virtio_ring.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = virtio_ring.h; sourceTree = "<group>"; };
 		29CD526D13DD86D40062DAA6 /* readme.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; name = readme.md; path = ../readme.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -71,6 +73,7 @@
 		299F18EE13DC183D000200A5 /* virtio-net */ = {
 			isa = PBXGroup;
 			children = (
+				29A7E26113E2DC0B00E33939 /* virtio_ring.h */,
 				299F18F513DC183D000200A5 /* virtio_net.h */,
 				299F18F713DC183D000200A5 /* virtio_net.cpp */,
 				299F18EF13DC183D000200A5 /* Supporting Files */,
@@ -97,6 +100,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				299F18F613DC183D000200A5 /* virtio_net.h in Headers */,
+				29A7E26213E2DC0B00E33939 /* virtio_ring.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -201,7 +205,7 @@
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.6;
+				MACOSX_DEPLOYMENT_TARGET = 10.5;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
 			};
@@ -216,7 +220,7 @@
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.6;
+				MACOSX_DEPLOYMENT_TARGET = 10.5;
 				SDKROOT = macosx;
 			};
 			name = Release;
