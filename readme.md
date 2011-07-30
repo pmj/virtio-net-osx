@@ -42,7 +42,9 @@ So far, only the most basic device matching initialisation is working. The
 driver will attach
 itself to any PCI devices with the virtio device and vendor ID and the network
 subsystem and device class IDs. It will then begin to initialise the device
-and read its feature bits and log them to the system log.
+and read its feature bits and log them to the system log. Preliminary work for
+initialising the buffer queues has also been done: the receive queue is
+allocated.
 
 ## Next Steps
 
@@ -58,18 +60,23 @@ a work loop which will handle the interrupts, etc.
 I'll provide binary KEXTs once the driver is actually useful. Unless you're a
 developer, there is currently *nothing* useful you can do with this driver.
 Until it's done, you'll need to compile it yourself. This repository contains
-an XCode 4 project with which the KEXT can be built in a single step for
-Mac OS X 10.6 and 10.7. The code should also work without modification on earlier
-SDKs, but you'll probably need to create a new project in XCode 3, which comes
-with the older SDKs.
+an XCode 4 project with which the KEXT can be built in a single step. The KEXT
+should work on versions 10.5 (Leopard) through 10.7 (Lion), but so far has only
+been tested on Snow Leopard. Since XCode 4 only runs on Snow Leopard and up,
+you'll need to create your own XCode 3 project if you want to compile it on
+Leopard.
 
 ## License
 
-I'm making the source code for this driver available under both the [zLib license][zlib]
-and the the [3-clause BSD license][bsd3].
+I'm making the source code for this driver available under the [zLib license][zlib],
+the [3-clause BSD license][bsd3] and the [MIT License][mit]. The `virtio_ring.h`
+file is adapted from the virtio spec and 3-clause BSD licensed. I've added the
+MIT license in the hope that this will help inclusion into VirtualBox proper.
 
 [virtio]: http://ozlabs.org/~rusty/virtio-spec/
 
 [bsd3]: http://www.opensource.org/licenses/BSD-3-Clause
 
 [zlib]: http://www.opensource.org/licenses/zLib
+
+[mit]: http://www.opensource.org/licenses/MIT

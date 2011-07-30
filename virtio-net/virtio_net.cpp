@@ -11,6 +11,9 @@
 #ifndef PRIuPTR
 #define PRIuPTR "%lu"
 #endif
+#ifndef PRIXPTR
+#define PRIXPTR "%lX"
+#endif
 #ifndef PRIX64
 #define PRIX64 "%llX"
 #endif
@@ -211,53 +214,8 @@ static inline size_t vring_size(size_t qsz)
 #define LOG_FEATURE(FEATURES, FEATURE) \
 log_feature(FEATURES, FEATURE, #FEATURE)
 
-bool eu_philjordan_virtio_net::start(IOService* provider)
+static void virtio_log_supported_features(uint32_t dev_features)
 {
-	IOLog("virtio-net start(%p)\n", provider);
-	IOPCIDevice* pci = OSDynamicCast(IOPCIDevice, provider);
-	if (!pci)
-	{
-		if (!provider)
-			return false;
-		const OSMetaClass* meta = provider->getMetaClass();
-		IOLog("virtio-net start(): Provider (%p) has wrong type: %s\n", provider, meta->getClassName());
-		return false;
-	}
-	
-	IOLog("virtio-net start(): attempting to map device memory with register 0\n");
-	IODeviceMemory* devmem = pci->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
-	if (!devmem)
-	{
-		IOLog("virtio-net start(): Getting memory descriptor failed.\n");
-		return false;
-	}
-	IOMemoryMap* iomap = devmem->map();
-	if (!iomap)
-	{
-		IOLog("virtio-net start(): Mapping failed.\n");
-		return false;
-	}
-	IOLog("virtio-net start(): Mapped %llu bytes (descriptor length: %llu)\n",
-		static_cast<uint64_t>(iomap->getLength()),
-		static_cast<uint64_t>(devmem->getLength()));
-	
-	IOLog("virtio-net start(): Device Initialisation Sequence\n");
-	
-	// Reset the device just in case it was previously opened and left in a weird state.
-	pci->ioWrite8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, VIRTIO_PCI_DEVICE_STATUS_RESET, iomap);
-
-	IOLog("virtio-net start(): Device reset\n");
-
-	// Acknowledge the device, then tell it we're the driver
-	uint8_t status = pci->ioRead8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, iomap);
-	pci->ioWrite8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, status | VIRTIO_PCI_DEVICE_STATUS_ACKNOWLEDGE, iomap);
-	IOLog("virtio-net start(): Device acknowledged\n");
-
-	status = pci->ioRead8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, iomap);
-	pci->ioWrite8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, status | VIRTIO_PCI_DEVICE_STATUS_DRIVER, iomap);
-	IOLog("virtio-net start(): Device informed of driver\n");
-	
-	uint32_t dev_features = OSSwapLittleToHostInt32(pci->ioRead32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31, iomap));
 	IOLog("virtio-net start(): Device reports LOW feature bitmap 0x%08x.\n", dev_features);
 	IOLog("virtio-net start(): Recognised generic virtio features:\n");
 	LOG_FEATURE(dev_features, VIRTIO_F_NOTIFY_ON_EMPTY);    // Supported by VBox 4.1.0
@@ -291,13 +249,10 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	{
 		IOLog("Feature bits not recognised by this driver: 0x%08x\n", unrecognised);
 	}
-	
-	/* Read out the flexible config space */
-	size_t config_offset = VIRTIO_PCI_CONF_OFFSET_END_HEADER;
+}
 
-#warning TODO: find out how to detect if MSI-X is enabled (I don't think it ever is on Mac OS X)
-	// if (msix_enabled) config_offset += 4;
-	
+ssize_t virtio_hi_feature_bitmap_offset(uint32_t dev_features, size_t& config_offset)
+{
 	ssize_t hi_features_offset = -1;
 	if (dev_features & VIRTIO_F_FEATURES_HIGH)
 	{
@@ -305,6 +260,65 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 		hi_features_offset = config_offset;
 		config_offset += 2 * 4;
 	}
+	return hi_features_offset;
+}
+
+bool eu_philjordan_virtio_net::start(IOService* provider)
+{
+	IOLog("virtio-net start(%p)\n", provider);
+	IOPCIDevice* pci = OSDynamicCast(IOPCIDevice, provider);
+	if (!pci)
+	{
+		if (!provider)
+			return false;
+		const OSMetaClass* meta = provider->getMetaClass();
+		IOLog("virtio-net start(): Provider (%p) has wrong type: %s (expected IOPCIDevice)\n", provider, meta->getClassName());
+		return false;
+	}
+	
+	//IOLog("virtio-net start(): attempting to map device memory with register 0\n");
+	IODeviceMemory* devmem = pci->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
+	if (!devmem)
+	{
+		IOLog("virtio-net start(): Getting memory descriptor failed.\n");
+		return false;
+	}
+	IOMemoryMap* iomap = devmem->map();
+	if (!iomap)
+	{
+		IOLog("virtio-net start(): Mapping failed.\n");
+		return false;
+	}
+	/*IOLog("virtio-net start(): Mapped %llu bytes (descriptor length: %llu)\n",
+		static_cast<uint64_t>(iomap->getLength()),
+		static_cast<uint64_t>(devmem->getLength()));*/
+	
+	IOLog("virtio-net start(): Device Initialisation Sequence\n");
+	
+	// Reset the device just in case it was previously opened and left in a weird state.
+	pci->ioWrite8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, VIRTIO_PCI_DEVICE_STATUS_RESET, iomap);
+
+	// IOLog("virtio-net start(): Device reset\n");
+
+	// Acknowledge the device, then tell it we're the driver
+	uint8_t status = pci->ioRead8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, iomap);
+	pci->ioWrite8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, status | VIRTIO_PCI_DEVICE_STATUS_ACKNOWLEDGE, iomap);
+	// IOLog("virtio-net start(): Device acknowledged\n");
+
+	status = pci->ioRead8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, iomap);
+	pci->ioWrite8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, status | VIRTIO_PCI_DEVICE_STATUS_DRIVER, iomap);
+	// IOLog("virtio-net start(): Device informed of driver\n");
+	
+	uint32_t dev_features = OSSwapLittleToHostInt32(pci->ioRead32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31, iomap));
+	virtio_log_supported_features(dev_features);
+	
+	/* Read out the flexible config space */
+	size_t config_offset = VIRTIO_PCI_CONF_OFFSET_END_HEADER;
+
+#warning TODO: find out how to detect if MSI-X is enabled (I don't think it ever is on Mac OS X)
+	// if (msix_enabled) config_offset += 4;
+	
+	ssize_t hi_features_offset = virtio_hi_feature_bitmap_offset(dev_features, config_offset);
 	
 	// offset for the device-specific configuration space
 	size_t device_specific_offset = config_offset;
@@ -342,7 +356,7 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 		
 		iomap->release();
 		
-		IOLog("Initialised virtqueue 0 (receive queue) with " PRIuPTR " bytes at " PRIX64 "\n", queue_size_bytes, rx_queue_buffer->getPhysicalAddress());
+		IOLog("Initialised virtqueue 0 (receive queue) with " PRIuPTR " bytes at " PRIXPTR "\n", queue_size_bytes, rx_queue_buffer->getPhysicalAddress());
 		
 		this->rx_queue = rx_queue_buffer;
 		return true;
