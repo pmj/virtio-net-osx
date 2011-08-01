@@ -7,6 +7,7 @@
 #include <IOKit/network/IOEthernetController.h>
 
 class IOBufferMemoryDescriptor;
+class IOPCIDevice;
 class eu_philjordan_virtio_net : public IOEthernetController
 {
 	OSDeclareDefaultStructors(eu_philjordan_virtio_net);
@@ -30,6 +31,10 @@ public:
 	virtual IOReturn getHardwareAddress(IOEthernetAddress* addrP);
 
 protected:
+	/// The provider device. NOT retained.
+	IOPCIDevice* pci_dev;
+	/// Memory mapping of the virtio PCI configuration registers
+	IOMemoryMap* pci_config_mmap;
 	IOBufferMemoryDescriptor* rx_queue;
 };
 
