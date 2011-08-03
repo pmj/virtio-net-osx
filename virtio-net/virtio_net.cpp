@@ -29,7 +29,7 @@ bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 		return false;
 	
 	pci_dev = NULL;
-	rx_queue = NULL;
+	rx_queue.buf = NULL;
 	this->pci_config_mmap = NULL;
 	return true;
 }
@@ -335,42 +335,11 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	// offset for the device-specific configuration space
 	size_t device_specific_offset = config_offset;
 	
-	{
-		/* virtqueues must be aligned to 4096 bytes (last 12 bits 0) and the shifted
-		 * address will be written to a 32-bit register 
-		 */
-		const mach_vm_address_t VIRTIO_RING_ALLOC_MASK = 0xffffffffull << 12u;
-		// detect and allocate virtqueues - expect 2 plus 1 if VIRTIO_NET_F_CTRL_VQ is set
-		// queue 0 is receive queue (Appendix C, Configuration)
-		// queue 1 is transmit queue
-		// queue 2 is control queue (if present)
-		pci->ioWrite16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SELECT, 0, iomap);
-		uint16_t queue_size = pci->ioRead16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SIZE, iomap);
-#warning TODO: check queue size for sanity (>0, pow2, minimum sensible size)
-		if (queue_size == 0)
-		{
-			IOLog("Queue size for queue 0 is 0.\n");
-			goto fail;
-		}
-		IOLog("Reported queue size for rx queue: %u\n", queue_size);
-		// allocate an appropriately sized DMA buffer. As per the spec, this must be physically contiguous.
-		size_t queue_size_bytes = vring_size(queue_size);
-		IOBufferMemoryDescriptor* rx_queue_buffer = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-			kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
-		if (!rx_queue_buffer)
-		{
-			IOLog("Failed to allocate queue buffer with " PRIuPTR " contiguous bytes and mask " PRIX64 ".\n",
-				queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
-			goto fail;
-		}
-		memset(rx_queue_buffer->getBytesNoCopy(), 0, queue_size_bytes);
-		pci->ioWrite32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, rx_queue_buffer->getPhysicalAddress() >> 12u);
-				
-		IOLog("Initialised virtqueue 0 (receive queue) with " PRIuPTR " bytes at " PRIXPTR "\n", queue_size_bytes, rx_queue_buffer->getPhysicalAddress());
-		
-		this->rx_queue = rx_queue_buffer;
-		return true;
-	}
+	if (!setupVirtqueue(0, rx_queue))
+		goto fail;
+	IOLog("Initialised virtqueue 0 (receive queue) with " PRIuPTR " bytes at " PRIXPTR "\n", rx_queue.buf->getLength(), rx_queue.buf->getPhysicalAddress());
+
+	return true;
 fail:
 	if (pci && iomap)
 	{
@@ -378,20 +347,60 @@ fail:
 	}
 	return false;
 }
+	
+
+bool eu_philjordan_virtio_net::setupVirtqueue(
+	uint16_t queue_id, virtio_net_virtqueue& queue)
+{
+	/* virtqueues must be aligned to 4096 bytes (last 12 bits 0) and the shifted
+	 * address will be written to a 32-bit register 
+	 */
+	const mach_vm_address_t VIRTIO_RING_ALLOC_MASK = 0xffffffffull << 12u;
+	// detect and allocate virtqueues - expect 2 plus 1 if VIRTIO_NET_F_CTRL_VQ is set
+	// queue 0 is receive queue (Appendix C, Configuration)
+	// queue 1 is transmit queue
+	// queue 2 is control queue (if present)
+	pci_dev->ioWrite16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SELECT, queue_id, pci_config_mmap);
+	uint16_t queue_size = pci_dev->ioRead16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SIZE, pci_config_mmap);
+#warning TODO: check queue size for sanity (>0, pow2, minimum sensible size)
+	if (queue_size == 0)
+	{
+		IOLog("Queue size for queue %u is 0.\n", queue_id);
+		return false;
+	}
+	IOLog("Reported queue size for queue %u: %u\n", queue_id, queue_size);
+	// allocate an appropriately sized DMA buffer. As per the spec, this must be physically contiguous.
+	size_t queue_size_bytes = vring_size(queue_size);
+	IOBufferMemoryDescriptor* rx_queue_buffer = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+		kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
+	if (!rx_queue_buffer)
+	{
+		IOLog("Failed to allocate queue buffer with " PRIuPTR " contiguous bytes and mask " PRIX64 ".\n",
+			queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
+		return false;
+	}
+	memset(rx_queue_buffer->getBytesNoCopy(), 0, queue_size_bytes);
+	pci_dev->ioWrite32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, rx_queue_buffer->getPhysicalAddress() >> 12u, pci_config_mmap);
+				
+	queue.buf = rx_queue_buffer;
+	return true;
+}
 
 void eu_philjordan_virtio_net::stop(IOService* provider)
 {
 	IOLog("virtio-net stop()\n");
+	if (provider != this->pci_dev)
+		IOLog("Warning: stopping virtio-net with a different provider!?\n");
 	
 	if (this->pci_config_mmap)
 	{
 		this->pci_config_mmap->release();
 		this->pci_config_mmap = NULL;
 	}
-	if (this->rx_queue)
+	if (this->rx_queue.buf)
 	{
-		this->rx_queue->release();
-		this->rx_queue = NULL;
+		this->rx_queue.buf->release();
+		this->rx_queue.buf = NULL;
 		IOLog("Released rx queue\n");
 	}
 	this->pci_dev = NULL;
@@ -406,10 +415,10 @@ void eu_philjordan_virtio_net::free()
 		this->pci_config_mmap->release();
 		this->pci_config_mmap = NULL;
 	}
-	if (this->rx_queue)
+	if (this->rx_queue.buf)
 	{
-		this->rx_queue->release();
-		this->rx_queue = NULL;
+		this->rx_queue.buf->release();
+		this->rx_queue.buf = NULL;
 		IOLog("Released rx queue\n");
 	}
 

@@ -8,6 +8,12 @@
 
 class IOBufferMemoryDescriptor;
 class IOPCIDevice;
+
+struct virtio_net_virtqueue
+{
+	IOBufferMemoryDescriptor* buf;
+};
+
 class eu_philjordan_virtio_net : public IOEthernetController
 {
 	OSDeclareDefaultStructors(eu_philjordan_virtio_net);
@@ -31,11 +37,13 @@ public:
 	virtual IOReturn getHardwareAddress(IOEthernetAddress* addrP);
 
 protected:
+	bool setupVirtqueue(uint16_t queue_id, virtio_net_virtqueue& queue);
+	
 	/// The provider device. NOT retained.
 	IOPCIDevice* pci_dev;
 	/// Memory mapping of the virtio PCI configuration registers
 	IOMemoryMap* pci_config_mmap;
-	IOBufferMemoryDescriptor* rx_queue;
+	virtio_net_virtqueue rx_queue;
 };
 
 #endif
