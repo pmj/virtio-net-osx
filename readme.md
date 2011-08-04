@@ -41,19 +41,19 @@ initially but it will be once everything is working.
 So far, only the most basic device matching initialisation is working. The
 driver will attach
 itself to any PCI devices with the virtio device and vendor ID and the network
-subsystem and device class IDs. It will then begin to initialise the device
-and read its feature bits and log them to the system log. Preliminary work for
-initialising the buffer queues has also been done: the receive queue is
-allocated.
+subsystem and device class IDs. It will then initialise the device, negotiate its
+supported features and allocate memory for the transmit and receive queues. It
+will also output various diagnostic information including the MAC address to the
+kernel log. On unloading, all resources will be freed.
 
 ## Next Steps
 
-Device initialisation (as per the virtio spec) with minimal feature negotiation
-needs to be completed. The virtio ring buffer data structure used for packet
-transmission and receiving must be implemented and appropriately memory-mapped.
+The transmit and receive data structures must be filled with appropriate buffers
+for packets. We need to implement an interrupt handler, and appropriately marshal
+buffers between packet buffers and the queues.
+
 Then, we need to publish an `IOEthernetInterface` device and connect up the
-appropriate methods to the virtio data structure. This also means introducing
-a work loop which will handle the interrupts, etc.
+appropriate methods to the virtio data structure.
 
 ## Binaries
 
