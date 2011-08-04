@@ -514,8 +514,12 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 	if (provider != this->pci_dev)
 		IOLog("Warning: stopping virtio-net with a different provider!?\n");
 	
+	release_obj(rx_queue.buf);
+	memset(&rx_queue, 0, sizeof(rx_queue));
+	release_obj(tx_queue.buf);
+	memset(&tx_queue, 0, sizeof(tx_queue));
+	
 	release_obj(this->pci_config_mmap);
-	release_obj(this->rx_queue.buf);
 
 	this->pci_dev = NULL;
 }
@@ -524,8 +528,12 @@ void eu_philjordan_virtio_net::free()
 {
 	IOLog("virtio-net free()\n");
 
+	release_obj(rx_queue.buf);
+	memset(&rx_queue, 0, sizeof(rx_queue));
+	release_obj(tx_queue.buf);
+	memset(&tx_queue, 0, sizeof(tx_queue));
+
 	release_obj(this->pci_config_mmap);
-	release_obj(this->rx_queue.buf);
 
 	super::free();
 }
