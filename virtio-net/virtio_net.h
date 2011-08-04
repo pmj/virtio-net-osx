@@ -5,14 +5,16 @@
 #define VIRTIO_NET_H
 
 #include <IOKit/network/IOEthernetController.h>
+#include "virtio_ring.h"
 
 class IOBufferMemoryDescriptor;
 class IOPCIDevice;
 
-struct virtio_net_virtqueue
+struct virtio_net_virtqueue : vring
 {
-	IOBufferMemoryDescriptor* buf;
+	IOBufferMemoryDescriptor* buf;	
 };
+void virtqueue_init(IOBufferMemoryDescriptor* buf, uint16_t queue_size);
 
 class eu_philjordan_virtio_net : public IOEthernetController
 {
@@ -43,7 +45,9 @@ protected:
 	IOPCIDevice* pci_dev;
 	/// Memory mapping of the virtio PCI configuration registers
 	IOMemoryMap* pci_config_mmap;
+	
 	virtio_net_virtqueue rx_queue;
+	virtio_net_virtqueue tx_queue;
 };
 
 #endif

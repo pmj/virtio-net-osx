@@ -21,6 +21,11 @@
 OSDefineMetaClassAndStructors(eu_philjordan_virtio_net, IOEthernetController);
 #define super IOEthernetController
 
+static inline bool is_pow2(uint16_t num)
+{
+	return 0u == (num & (num - 1));
+}
+
 bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 {
 	IOLog("virtio-net init()\n");
@@ -337,7 +342,13 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	
 	if (!setupVirtqueue(0, rx_queue))
 		goto fail;
-	IOLog("Initialised virtqueue 0 (receive queue) with " PRIuPTR " bytes at " PRIXPTR "\n", rx_queue.buf->getLength(), rx_queue.buf->getPhysicalAddress());
+	IOLog("Initialised virtqueue 0 (receive queue) with " PRIuPTR " bytes (%u entries) at " PRIXPTR "\n",
+		rx_queue.buf->getLength(), rx_queue.num, rx_queue.buf->getPhysicalAddress());
+
+	if (!setupVirtqueue(1, tx_queue))
+		goto fail;
+	IOLog("Initialised virtqueue 1 (transmit queue) with " PRIuPTR " bytes (%u entries) at " PRIXPTR "\n",
+		tx_queue.buf->getLength(), rx_queue.num, rx_queue.buf->getPhysicalAddress());
 
 	return true;
 fail:
@@ -362,29 +373,40 @@ bool eu_philjordan_virtio_net::setupVirtqueue(
 	// queue 2 is control queue (if present)
 	pci_dev->ioWrite16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SELECT, queue_id, pci_config_mmap);
 	uint16_t queue_size = pci_dev->ioRead16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SIZE, pci_config_mmap);
-#warning TODO: check queue size for sanity (>0, pow2, minimum sensible size)
 	if (queue_size == 0)
 	{
 		IOLog("Queue size for queue %u is 0.\n", queue_id);
 		return false;
 	}
+	else if (!is_pow2(queue_size))
+	{
+		IOLog("Queue size for queue %u is %u, which is not a power of 2. Aborting.\n", queue_id, queue_size);
+		return false;
+	}
 	IOLog("Reported queue size for queue %u: %u\n", queue_id, queue_size);
 	// allocate an appropriately sized DMA buffer. As per the spec, this must be physically contiguous.
 	size_t queue_size_bytes = vring_size(queue_size);
-	IOBufferMemoryDescriptor* rx_queue_buffer = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-		kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
-	if (!rx_queue_buffer)
+	IOBufferMemoryDescriptor* queue_buffer = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+		kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut | kIOInhibitCache, queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
+	if (!queue_buffer)
 	{
 		IOLog("Failed to allocate queue buffer with " PRIuPTR " contiguous bytes and mask " PRIX64 ".\n",
 			queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
 		return false;
 	}
-	memset(rx_queue_buffer->getBytesNoCopy(), 0, queue_size_bytes);
-	pci_dev->ioWrite32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, rx_queue_buffer->getPhysicalAddress() >> 12u, pci_config_mmap);
+	memset(queue_buffer->getBytesNoCopy(), 0, queue_size_bytes);
+	pci_dev->ioWrite32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, queue_buffer->getPhysicalAddress() >> 12u, pci_config_mmap);
 				
-	queue.buf = rx_queue_buffer;
+	virtqueue_init(queue_buffer, queue_size);
+	
 	return true;
 }
+void virtqueue_init(virtio_net_virtqueue& queue, IOBufferMemoryDescriptor* buf, uint16_t queue_size)
+{
+	queue.buf = buf;
+	vring_init(&queue, queue_size, buf->getBytesNoCopy(), VIRTIO_PAGE_SIZE);
+}
+
 
 void eu_philjordan_virtio_net::stop(IOService* provider)
 {
