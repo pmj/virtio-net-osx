@@ -435,7 +435,11 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	
 	if (!super::start(provider))
 		return false;
-	
+
+	if (!pci->open(this))
+		return false;
+	this->pci_dev = pci;	
+
 	work_loop = getWorkLoop();
 	if (!work_loop)
 		return false;
@@ -466,7 +470,6 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 		return false;
 	}
 	
-	this->pci_dev = pci;
 	this->pci_config_mmap = iomap;
 	
 	IOLog("virtio-net start(): Device Initialisation Sequence\n");
@@ -540,13 +543,16 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	
 	// check link status, if possible
 	status_field_offset = 0;
+	bool link_is_up = true;
 	if (dev_features & VIRTIO_NET_F_STATUS)
 	{
 		status_field_offset = device_specific_offset + offsetof(virtio_net_config, status);
 		uint16_t status = readStatus();
 		IOLog("virtio-net start(): Link status field 0x%04X (link %s)\n",
 			status, (status & VIRTIO_NET_S_LINK_UP) ? "up" : "down");
+		link_is_up = (status & VIRTIO_NET_S_LINK_UP) != 0;
 	}
+	setLinkStatus((link_is_up ? kIONetworkLinkActive : 0) | kIONetworkLinkValid);
 	
 	// write back supported features
 	uint32_t supported_features = dev_features &
@@ -576,9 +582,11 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 		return false;
 	}
 	// create the interface nub
-	if (!attachInterface((IONetworkInterface **)&interface), false);
+	interface = NULL;
+	if (!attachInterface((IONetworkInterface **)&interface, false))
 	{
-		IOLog("virtio-net start(): attachInterface() failed.\n");
+		IOLog("virtio-net start(): attachInterface() failed, interface = %p [%s].\n",
+			interface, interface ? interface->getMetaClass()->getClassName() : "null");
 		return false;
 	}
 	interface->registerService();
@@ -692,6 +700,7 @@ IOOutputQueue* eu_philjordan_virtio_net::createOutputQueue()
 
 IOReturn eu_philjordan_virtio_net::enable(IONetworkInterface* interface)
 {
+	IOLog("virtio-net enable()\n");
 	if (interface != this->interface)
 	{
 		IOLog("virtio-net enable(): unknown interface %p (expected %p)\n", interface, this->interface);
@@ -704,6 +713,7 @@ IOReturn eu_philjordan_virtio_net::enable(IONetworkInterface* interface)
 
 IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 {
+	IOLog("virtio-net disable()\n");
 	return kIOReturnSuccess;
 }
 	
@@ -866,8 +876,7 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 	if (provider != this->pci_dev)
 		IOLog("Warning: stopping virtio-net with a different provider!?\n");
 	
-	detachInterface(interface);
-	interface = NULL;
+	release_obj(interface);
 
 	// reset device to disable virtqueues
 	setVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_RESET);
@@ -881,6 +890,8 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 	
 	release_obj(this->pci_config_mmap);
 
+	if (this->pci_dev)
+		this->pci_dev->close(this);
 	this->pci_dev = NULL;
 	
 	super::stop(provider);
@@ -889,6 +900,8 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 void eu_philjordan_virtio_net::free()
 {
 	IOLog("virtio-net free()\n");
+	
+	release_obj(interface);
 
 	virtqueue_free(rx_queue);
 	release_obj(tx_queue.buf);
@@ -902,6 +915,10 @@ void eu_philjordan_virtio_net::free()
 		release_obj(intr_event_source);
 	}
 	release_obj(work_loop);
+
+	if (this->pci_dev)
+		this->pci_dev->close(this);
+	this->pci_dev = NULL;
 
 	super::free();
 }
