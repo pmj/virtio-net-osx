@@ -24,6 +24,11 @@ struct virtio_net_virtqueue : vring
 	/* The index of the head of the linked list of free descriptors. */
 	uint16_t free_desc_head;
 	
+	uint16_t index;
+	
+	// When this differs from the queue's used index, pop buffers off the used queue to handle/recycle them
+	uint16_t last_used_idx;
+	
 	// Array of pointers to packet structures corresponding to each live buffer descriptor.
 	/* Length is virtqueue size. Used for retrieving the packet corresponding to
 	 * a buffer chain as it comes off the 'used' ring. */
@@ -31,7 +36,7 @@ struct virtio_net_virtqueue : vring
 };
 /* Initialise the queue structure, then mark all descriptors as free (in a
  * linked list). Allocates the packets_for_descs array. */
-void virtqueue_init(virtio_net_virtqueue& queue, IOBufferMemoryDescriptor* buf, uint16_t queue_size);
+void virtqueue_init(virtio_net_virtqueue& queue, IOBufferMemoryDescriptor* buf, uint16_t queue_size, uint16_t queue_id);
 /// Releases the buffer, frees the packets_for_descs array and clears fields.
 void virtqueue_free(virtio_net_virtqueue& queue);
 
@@ -87,7 +92,8 @@ protected:
 	uint16_t configReadLE16(uint16_t offset);
 	
 	bool populateReceiveBuffers();
-	
+
+	bool notifyQueueAvailIdx(virtio_net_virtqueue& queue, uint16_t new_avail_idx);
 	/// Overwrite the device/driver status register with the given value
 	void setVirtioDeviceStatus(uint8_t status);
 	/// Bitwise-or the device/driver status register with the given value
@@ -100,6 +106,9 @@ protected:
 	static bool interruptFilter(OSObject* me, IOFilterInterruptEventSource* source);
 	
 	static void interruptAction(OSObject* me, IOInterruptEventSource* source, int count);
+	void interruptAction(IOInterruptEventSource* source, int count);
+	
+	void handleReceivedPackets();
 	
 	/// The provider device. NOT retained.
 	IOPCIDevice* pci_dev;
@@ -115,8 +124,16 @@ protected:
 	/// 0 if reading status is not supported
 	uint16_t status_field_offset;
 	
+	/// ISR status register value in last successful interrupt
+	uint8_t last_isr;
+	/// Toggled on if the configuration change bit was detected in the interrupt handler
+	bool received_config_change;
+	
 	IOWorkLoop* work_loop;
 	IOFilterInterruptEventSource* intr_event_source;
+	
+	/// Set of IOBufferMemoryDescriptor objects to be used as network packet header buffers
+	OSSet* packet_bufdesc_pool;
 };
 
 #endif
