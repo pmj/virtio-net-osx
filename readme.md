@@ -38,22 +38,41 @@ initially but it will be once everything is working.
 
 ## Status
 
-So far, only the most basic device matching initialisation is working. The
-driver will attach
+So far, receiving packets appears to be working. The driver will attach
 itself to any PCI devices with the virtio device and vendor ID and the network
 subsystem and device class IDs. It will then initialise the device, negotiate its
 supported features and allocate memory for the transmit and receive queues. It
 will also output various diagnostic information including the MAC address to the
-kernel log. On unloading, all resources will be freed.
+kernel log.
+
+The driver installs an interrupt handler with a filter for ignoring uninteresting
+interrupts. It populates the receive queue with blank network packets. Finally,
+it exposes an ethernet interface to the kernel, which can be enabled by the user,
+at which point packets can be received, but currently not transmitted.
+
+On unloading, most resources are freed, but unused packets in the receive queue
+are currently leaked.
 
 ## Next Steps
 
-The transmit and receive data structures must be filled with appropriate buffers
-for packets. We need to implement an interrupt handler, and appropriately marshal
-buffers between packet buffers and the queues.
+Receiving packets appears to be working, but the output queue seems to be
+incorrectly set up, so we're not yet getting any packets to transmit, for some
+reason. This needs to be investigated, then those packets can be added to the
+appropriate queue, and finally freed once the device is done with them.
 
-Then, we need to publish an `IOEthernetInterface` device and connect up the
-appropriate methods to the virtio data structure.
+The code is also becoming quite messy. Most of the things happening in `start()`
+and `stop()` should be happening in `enable()` and `disable()`, respectively.
+Some functions are also very long and should be split up. Code documentation
+wouldn't hurt either.
+
+Resource leaks must be fixed, along with any error handling.
+
+We should probably gather network statistics and expose any status changes to
+the system.
+
+Finally, there are many, many optimisation opportunities, some easier to
+implement than others.
+
 
 ## Binaries
 
