@@ -78,7 +78,30 @@ public:
 	virtual bool configureInterface(IONetworkInterface *netif);
 	virtual IOReturn getPacketFilters(const OSSymbol *group, UInt32 *filters) const;
 protected:
+	enum DriverState
+	{
+		// Error states:
+		kDriverStateStartFailed = -10,
+		kDriverStateStartFailedUnsupportedDevice,
+		kDriverStateStartFailedOutOfMemory,
+		kDriverStateEnableFailed,
+		kDriverStateEnableFailedOutOfMemory,
+		
+		// Expected states:
+		/// Before start(); we may have talked to the device in probe(), but nothing else
+		kDriverStateInitial = 0,
+		/// start() completed successfully, but enable() hasn't yet been called (or has been negated by disable())
+		kDriverStateStarted,
+		/// enable() has been called, and succeeded
+		kDriverStateEnabled,
+		/// enable() has been called with a debugging client, and succeeded
+		kDriverStateEnabledDebugging,
+		/// stop() was called
+		kDriverStateStopped
+		
+	};
 	bool setupVirtqueue(uint16_t queue_id, virtio_net_virtqueue& queue);
+	/// Sets the "failed" bit in the device's status register
 	void failDevice();
 	void configWrite8(uint16_t offset, uint8_t val);
 	void configWrite16(uint16_t offset, uint16_t val);
@@ -112,15 +135,21 @@ protected:
 	int32_t readStatus();
 	
 	/// Interrupt filter that checks whether the interrupt means work needs to be done
+	/** Also disables further interrupts until the initial interrupt has been handled.
+	 */
 	static bool interruptFilter(OSObject* me, IOFilterInterruptEventSource* source);
 	
+	/// Secondary interrupt. Forwards to the member function of the same name.
 	static void interruptAction(OSObject* me, IOInterruptEventSource* source, int count);
+	/// Actually performs
 	void interruptAction(IOInterruptEventSource* source, int count);
 	
 	void handleReceivedPackets();
 	
 	/// Frees any packets marked as "used" in the transmit queue and frees their descriptors
 	void releaseSentPackets();
+	
+	DriverState driver_state;
 	
 	/// The provider device. NOT retained.
 	IOPCIDevice* pci_dev;
