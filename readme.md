@@ -69,11 +69,6 @@ and unsent packets in the transmit queue are currently leaked.
 
 ## Next Steps
 
-Sending and receiving packets appears to be working nicely, but there's a
-noticeable slowdown in the VM's responsiveness. Ping times seem to be fine, so
-I assume we're getting too many interrupts. I need to reduce these by following
-the recommendations in the virtio spec.
-
 The initialisation code has become quite messy. Most of the things happening in
 `start()`
 and `stop()` should be happening in `enable()` and `disable()`, respectively.
@@ -100,6 +95,22 @@ I don't know if you can run Mac OS X on any other virtual machine containers
 that support virtio network adapters, buf if you can, it would be nice to know
 if the driver works on those.
 
+## Future refinements
+
+Longer term, if we wish to support other virtio devices, the PCI device handling
+should be separated out into a distinct class from the ethernet controller. This
+could then take care of general feature negotiation, memory mapping, virtqueue
+handling, etc. To illustrate, the I/O registry hierarchy currently implemented
+by this driver is:
+
+    IOPCIDevice -> eu_philjordan_virtio_net[IOEthernetController] -> IOEthernetInterface
+
+Where the object on the left side of the arrow is the provider of the one on the
+right. Under the proposed scheme, it would look something like this:
+
+    IOPCIDevice -> VirtioPCIDriver -> VirtioNetController[IOEthernetController] -> IOEthernetInterface
+
+Other types of virtio devices would likewise attach to the `VirtioPCIDriver`.
 
 ## Binaries
 
