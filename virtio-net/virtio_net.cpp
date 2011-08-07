@@ -460,6 +460,9 @@ void eu_philjordan_virtio_net::interruptAction(IOInterruptEventSource* source, i
 		kprintf("TX queue last used idx: %u, tx_queue used: %p, desc: %p, avail: %p, free: %u, head: %u\n",
 			tx_queue.last_used_idx, tx_queue.used, tx_queue.desc, tx_queue.avail, tx_queue.num_free_desc, tx_queue.free_desc_head);
 		IOLog("TX queue last used idx (%u) differs from current (%u)\n", tx_queue.last_used_idx, tx_queue.used->idx);
+		
+		
+		
 	}
 }
 
@@ -786,12 +789,28 @@ IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 	
 UInt32 eu_philjordan_virtio_net::outputPacket(mbuf_t buffer, void *param)
 {
-#warning TODO
-	IOLog("virtio-net outputPacket(): dropped packet of length %lu\n", mbuf_len(buffer));
+	if (tx_queue.num_free_desc < 3)
+	{
+		IOLog("virtio-net outputPacket(): Transmit queue full\n");
+		return kIOReturnOutputStall;
+	}
 	
+	if (mbuf_len(buffer) > kIOEthernetMaxPacketSize)
+	{
+		IOLog("virtio-net outputPacket(): dropped oversized packet of length %lu\n", mbuf_len(buffer));
+		freePacket(buffer);
+		return kIOReturnOutputDropped;
+	}
 	
-	
-	return kIOReturnOutputDropped; 
+	uint16_t avail_idx = tx_queue.avail->idx;
+	if (!addPacketToQueue(buffer, tx_queue, false /* packet to be read by device */, avail_idx))
+	{
+		IOLog("virtio-net outputPacket(): failed to add packet (length: %lu) to queue, dropping it.\n", mbuf_len(buffer));
+		freePacket(buffer);
+		return kIOReturnOutputDropped;
+	}
+	notifyQueueAvailIdx(tx_queue, avail_idx);
+	return kIOReturnOutputSuccess;
 }
 	
 void eu_philjordan_virtio_net::receivePacket(void *pkt, UInt32 *pktSize, UInt32 timeout)
