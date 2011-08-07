@@ -457,12 +457,12 @@ void eu_philjordan_virtio_net::interruptAction(IOInterruptEventSource* source, i
 	// Dispose of any completed sent packets
 	if (tx_queue.last_used_idx != tx_queue.used->idx)
 	{
-		kprintf("TX queue last used idx: %u, tx_queue used: %p, desc: %p, avail: %p, free: %u, head: %u\n",
+		/*kprintf("TX queue last used idx: %u, tx_queue used: %p, desc: %p, avail: %p, free: %u, head: %u\n",
 			tx_queue.last_used_idx, tx_queue.used, tx_queue.desc, tx_queue.avail, tx_queue.num_free_desc, tx_queue.free_desc_head);
-		IOLog("TX queue last used idx (%u) differs from current (%u)\n", tx_queue.last_used_idx, tx_queue.used->idx);
+		*/
+		//IOLog("TX queue last used idx (%u) differs from current (%u), freeing packets.\n", tx_queue.last_used_idx, tx_queue.used->idx);
 		
-		
-		
+		releaseSentPackets();
 	}
 }
 
@@ -791,8 +791,13 @@ UInt32 eu_philjordan_virtio_net::outputPacket(mbuf_t buffer, void *param)
 {
 	if (tx_queue.num_free_desc < 3)
 	{
-		IOLog("virtio-net outputPacket(): Transmit queue full\n");
-		return kIOReturnOutputStall;
+		IOLog("virtio-net outputPacket(): Transmit queue full, trying to free up some descriptors...\n");
+		releaseSentPackets();
+		if (tx_queue.num_free_desc < 3)
+		{
+			IOLog("virtio-net outputPacket(): Transmit queue really full, pipeline stalled.\n");
+			return kIOReturnOutputStall;
+		}
 	}
 	
 	if (mbuf_len(buffer) > kIOEthernetMaxPacketSize)
@@ -988,6 +993,63 @@ bool eu_philjordan_virtio_net::populateReceiveBuffers()
 	return true;
 }
 
+void eu_philjordan_virtio_net::releaseSentPackets()
+{
+	if (!work_loop || !work_loop->inGate())
+	{
+		kprintf("virtio-net releaseSentPackets(): Warning! Not holding work-loop gate!\n");
+	}
+
+	while (tx_queue.last_used_idx != tx_queue.used->idx)
+	{
+		vring_used_elem& used = tx_queue.used->ring[tx_queue.last_used_idx % tx_queue.num];
+		uint16_t used_desc = used.id;
+#warning TODO: defend against out-of-range indices
+		virtio_net_packet* packet = tx_queue.packets_for_descs[used_desc];
+
+		if (packet)
+		{
+			if (packet->mbuf)
+			{
+				freePacket(packet->mbuf);
+			}
+			else
+			{
+				IOLog("virtio-net releaseSentPackets(): warning, packet with no mbuf, probably leaking memory.\n");
+			}
+			packet->mbuf = NULL;
+			IOBufferMemoryDescriptor* mem = packet->mem;
+			if (mem)
+			{
+				packet_bufdesc_pool->setObject(mem);
+			}
+			else
+			{
+				IOLog("virtio-net releaseSentPackets(): warning, packet with no memory descriptor, probably leaking memory.\n");
+			}
+			release_obj(mem);
+		}
+		else
+		{
+			IOLog("virtio-net releaseSentPackets(): warning, used transmit buffer chain without matching packet reported. Probably leaking memory.\n");
+			IOLog("virtio-net releaseSentPackets(): tx queue used element: desc %u, length %u\n", used.id, used.len);
+			uint16_t desc = used_desc;
+			while (true)
+			{
+#warning TODO: Defend against infinite loop (out of range descriptors, circular lists)
+				IOLog("virtio-net releaseSentPackets(): used buffer %u: length %u, associated packet: %p\n",
+					desc, tx_queue.desc[desc].len, packet);
+				if (0 == (tx_queue.desc[desc].flags & VRING_DESC_F_NEXT))
+					break;
+				desc = tx_queue.desc[desc].next;
+			}
+		}
+		
+		// recycle the descriptors
+		freeDescriptorChain(tx_queue, used_desc);
+		++tx_queue.last_used_idx;
+	}
+}
 
 void eu_philjordan_virtio_net::handleReceivedPackets()
 {
@@ -1036,7 +1098,7 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 					packet->header.gso_size, packet->header.gso_size, packet->header.csum_start, packet->header.csum_offset);
 				kprintf("virtio-net handleReceivedPackets(): packet dump: mbuf=%p, mem=%p\n", packet->mbuf, packet->mem);
 				if (packet->mbuf)
-					mbuf_free(packet->mbuf);
+					freePacket(packet->mbuf);
 			}
 			packet->mbuf = NULL;
 			IOBufferMemoryDescriptor* mem = packet->mem;

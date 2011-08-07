@@ -119,6 +119,9 @@ protected:
 	
 	void handleReceivedPackets();
 	
+	/// Frees any packets marked as "used" in the transmit queue and frees their descriptors
+	void releaseSentPackets();
+	
 	/// The provider device. NOT retained.
 	IOPCIDevice* pci_dev;
 	/// Memory mapping of the virtio PCI configuration registers
