@@ -988,6 +988,7 @@ bool eu_philjordan_virtio_net::populateReceiveBuffers()
 	return true;
 }
 
+
 void eu_philjordan_virtio_net::handleReceivedPackets()
 {
 	if (!work_loop || !work_loop->inGate())
@@ -1060,27 +1061,32 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 		}
 		
 		// recycle the descriptors
-		uint16_t desc = used_desc; 
-		while (true)
-		{
-#warning TODO: Defend against infinite loop (out of range descriptors, circular lists)
-			uint16_t next = rx_queue.desc[desc].next;
-			bool has_next = (0 != (rx_queue.desc[desc].flags & VRING_DESC_F_NEXT));
-			rx_queue.desc[desc].addr = 0;
-			rx_queue.desc[desc].len = 0;
-			rx_queue.desc[desc].flags = 0;
-			rx_queue.desc[desc].next = 0;
-			vring_push_free_desc(rx_queue, desc);
-			if (!has_next)
-				break;
-			desc = next;
-		}
+		freeDescriptorChain(rx_queue, used_desc);
 		++rx_queue.last_used_idx;
 	}
 	if (packets_submitted > 0)
 	{
 		interface->flushInputQueue();
 		//IOLog("virtio-net handleReceivedPackets(): %u received\n", packets_submitted);
+	}
+}
+
+void eu_philjordan_virtio_net::freeDescriptorChain(virtio_net_virtqueue& queue, uint16_t desc_chain_head)
+{
+	uint16_t desc = desc_chain_head; 
+	while (true)
+	{
+#warning TODO: Defend against infinite loop (out of range descriptors, circular lists)
+		uint16_t next = queue.desc[desc].next;
+		bool has_next = (0 != (queue.desc[desc].flags & VRING_DESC_F_NEXT));
+		queue.desc[desc].addr = 0;
+		queue.desc[desc].len = 0;
+		queue.desc[desc].flags = 0;
+		queue.desc[desc].next = 0;
+		vring_push_free_desc(queue, desc);
+		if (!has_next)
+			break;
+		desc = next;
 	}
 }
 

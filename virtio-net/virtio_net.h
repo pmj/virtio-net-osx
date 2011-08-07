@@ -99,6 +99,7 @@ protected:
 	 * freed in either case (but referenced as a buffer in case of success).
 	 */
 	bool addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx);
+	void freeDescriptorChain(virtio_net_virtqueue& queue, uint16_t desc_chain_head);
 	bool populateReceiveBuffers();
 
 	bool notifyQueueAvailIdx(virtio_net_virtqueue& queue, uint16_t new_avail_idx);
