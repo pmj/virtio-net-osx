@@ -1,5 +1,12 @@
 # Virtio-Net for Mac OS X
 
+## Summary
+
+Some virtualisation software (I know of VirtualBox and Linux KVM/Qemu) implements
+paravirtual hardware per the "virtio" specification. One type of virtio device
+is the "virtio-net" ethernet adapter. Linux and Windows guest drivers exist for
+it, but as far as I know, this is the first such driver for Mac OS X (10.5+).
+
 ## Virtio and virtio-net
 
 [*virtio*][virtio] is an open specification for virtualised "hardware" in
@@ -38,7 +45,12 @@ initially but it will be once everything is working.
 
 ## Status
 
-So far, receiving packets appears to be working. The driver will attach
+Receiving and transmitting packets works, the adapter is able to negotiate DHCP,
+send and receive pings, handle TCP connections, etc. The virtual machine appears
+somewhat sluggish when it's got data flowing through it, so we're probably
+generating far too many interrupts.
+
+The driver will attach
 itself to any PCI devices with the virtio device and vendor ID and the network
 subsystem and device class IDs. It will then initialise the device, negotiate its
 supported features and allocate memory for the transmit and receive queues. It
@@ -46,32 +58,47 @@ will also output various diagnostic information including the MAC address to the
 kernel log.
 
 The driver installs an interrupt handler with a filter for ignoring uninteresting
-interrupts. It populates the receive queue with blank network packets. Finally,
+interrupts. (I assume these happen when another device generates an interrupt on
+the same line) It populates the receive queue with blank network packets. It
+creates an output queue for sending packets. Finally,
 it exposes an ethernet interface to the kernel, which can be enabled by the user,
-at which point packets can be received, but currently not transmitted.
+at which point packets can be received and sent.
 
 On unloading, most resources are freed, but unused packets in the receive queue
-are currently leaked.
+and unsent packets in the transmit queue are currently leaked.
 
 ## Next Steps
 
-Receiving packets appears to be working, but the output queue seems to be
-incorrectly set up, so we're not yet getting any packets to transmit, for some
-reason. This needs to be investigated, then those packets can be added to the
-appropriate queue, and finally freed once the device is done with them.
+Sending and receiving packets appears to be working nicely, but there's a
+noticeable slowdown in the VM's responsiveness. Ping times seem to be fine, so
+I assume we're getting too many interrupts. I need to reduce these by following
+the recommendations in the virtio spec.
 
-The code is also becoming quite messy. Most of the things happening in `start()`
+The initialisation code has become quite messy. Most of the things happening in
+`start()`
 and `stop()` should be happening in `enable()` and `disable()`, respectively.
 Some functions are also very long and should be split up. Code documentation
 wouldn't hurt either.
 
-Resource leaks must be fixed, along with any error handling.
+Resource leaks must be fixed, along with any error handling. Currently, some
+data coming from the device is blindly trusted. This isn't a big deal - if
+we can't trust the VM container, we can't trust anything at all. Still, it would
+be nice to avoid kernel panics on buggy virtio device implementations.
+
+Since the motivation for writing the driver in the first place was using it for
+kernel debugging, that API must be implemented (after tidying up the "normal"
+networking path, so they don't conflict).
 
 We should probably gather network statistics and expose any status changes to
 the system.
 
-Finally, there are many, many optimisation opportunities, some easier to
-implement than others.
+Finally, there are many other optimisation opportunities, some easier to
+implement than others. Some involve using optional device features, which means
+using multiple different code paths.
+
+I don't know if you can run Mac OS X on any other virtual machine containers
+that support virtio network adapters, buf if you can, it would be nice to know
+if the driver works on those.
 
 
 ## Binaries
