@@ -114,6 +114,32 @@ protected:
 	void configWriteLE16(uint16_t offset, uint16_t val);
 	uint16_t configReadLE16(uint16_t offset);
 	
+	// Universal virtio configuration space/status functions:
+	
+	/// Writes the 'reset' value to the device state register, thus re-inititalising it.
+	void virtioResetDevice();
+	/// Overwrite the device/driver status register with the given value
+	void setVirtioDeviceStatus(uint8_t status);
+	/// Bitwise-or the device/driver status register with the given value
+	void updateVirtioDeviceStatus(uint8_t status);
+	/// Resets the device, then initialise it far enough to read out the device feature register
+	uint32_t virtioResetInitAndReadFeatureBits();
+
+	// Virtio configuration space functions called from start():
+	
+	/// Creates the memory mapping for the virtio configuration space
+	bool mapVirtioConfigurationSpace();
+	/// Processes the various optional features which affect the layout of the generic virtio configuration header
+	/** Returns where the standard configuration ends, and by implication, where
+	 * the device-specific region starts. Sets dev_features_hi. */
+	uint16_t virtioReadOptionalConfigFieldsGetDeviceSpecificOffset();
+	/// Read out or generate the MAC address, depending on what the hardware decides
+	void determineMACAddress(uint16_t device_specific_offset);
+	/// Checks link status, if possible, and records its configuration space offset for later updates
+	void detectLinkStatusFeature(uint16_t device_specific_offset);
+	
+	// Virtqueue management functions:
+	
 	/** Allocates/recycles the header buffer, sets up the packet data buffers,
 	 * writes the virtqueue descriptors, and the head's packets_for_descs entry.
 	 * Then fills out the 'available' ring buffer
@@ -125,15 +151,23 @@ protected:
 	void freeDescriptorChain(virtio_net_virtqueue& queue, uint16_t desc_chain_head);
 	bool populateReceiveBuffers();
 
-	bool notifyQueueAvailIdx(virtio_net_virtqueue& queue, uint16_t new_avail_idx);
-	/// Overwrite the device/driver status register with the given value
-	void setVirtioDeviceStatus(uint8_t status);
-	/// Bitwise-or the device/driver status register with the given value
-	void updateVirtioDeviceStatus(uint8_t status);
+	bool notifyQueueAvailIdx(virtio_net_virtqueue& queue, uint16_t new_avail_idx);		
 	
+	/// Free any packet buffers in the now shut down queue
+	void clearVirtqueuePackets(virtio_net_virtqueue& queue);
+	
+
 	/// Read network device status register; returns negative value if unsupported
 	int32_t readStatus();
 	
+	/// Creates and activates the interrupt event source
+	/** Should be called as soon as the virtqueues become active, i.e. at the end of enable() */
+	bool beginHandlingInterrupts();
+	/// Deactivates and destroys the interrupt event source
+	/** Should be called as soon as the virtqueues have been deactivated, but
+	 * before they are cleared. (i.e. in disable()) */
+	void endHandlingInterrupts();
+
 	/// Interrupt filter that checks whether the interrupt means work needs to be done
 	/** Also disables further interrupts until the initial interrupt has been handled.
 	 */
@@ -156,12 +190,23 @@ protected:
 	/// Memory mapping of the virtio PCI configuration registers
 	IOMemoryMap* pci_config_mmap;
 	
+	/// The standard bit map of virtio device features
+	uint32_t dev_features_lo;
+	/// The extended bit map of virtio device features (or 0 if the high bits aren't available)
+	/** Initialised at start() by virtioReadOptionalConfigFieldsGetDeviceSpecificOffset() */
+	uint32_t dev_features_hi;
+	
 	IOEthernetInterface* interface;
 	
 	virtio_net_virtqueue rx_queue;
 	virtio_net_virtqueue tx_queue;
 	
 	IOEthernetAddress mac_address;
+	/// Set to true once the mac address has been initialised
+	/* The MAC address may be determined either by reading out the hardware register,
+	 * or generated randomly. */
+	bool mac_address_is_valid;
+	
 	/// 0 if reading status is not supported
 	uint16_t status_field_offset;
 	

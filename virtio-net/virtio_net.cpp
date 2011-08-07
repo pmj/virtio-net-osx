@@ -416,9 +416,14 @@ void eu_philjordan_virtio_net::updateVirtioDeviceStatus(uint8_t status)
 
 void eu_philjordan_virtio_net::failDevice()
 {
-	if (pci_dev && pci_config_mmap)
+	if (pci_dev)
 	{
-		updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_FAILED);
+		if (pci_config_mmap)
+		{
+			updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_FAILED);
+			release_obj(pci_config_mmap);
+		}
+		pci_dev->close(this);
 	}
 }
 
@@ -472,7 +477,23 @@ void eu_philjordan_virtio_net::interruptAction(IOInterruptEventSource* source, i
 		bool config_change = !OSTestAndClear(0, &received_config_change);
 		if (config_change)
 		{
-			IOLog("virtio-net interruptAction(): received a configuration change! (currently unhandled)\n");
+			if (status_field_offset > 0)
+			{
+				// Link status may have changed
+				int32_t status = readStatus();
+				if (status < 0)
+				{
+					IOLog("virtio-net interruptAction(): Reading link status unexpectedly failed.\n");
+				}
+				else
+				{
+					setLinkStatus(((status & VIRTIO_NET_S_LINK_UP) ? kIONetworkLinkActive : 0) | kIONetworkLinkValid);
+				}
+			}
+			else
+			{
+				IOLog("virtio-net interruptAction(): received a configuration change! (currently unhandled)\n");
+			}
 		}
 
 		// Handle received packets
@@ -510,8 +531,83 @@ void eu_philjordan_virtio_net::interruptAction(IOInterruptEventSource* source, i
 	}
 }
 
+static void virtio_net_log_bad_provider(IOService* provider)
+{
+	if (!provider)
+	{
+		IOLog("virtio-net start(): Error! Got NULL provider!?\n");
+		return;
+	}
+	const OSMetaClass* meta = provider->getMetaClass();
+	IOLog("virtio-net start(): Provider (%p) has wrong type: %s (expected IOPCIDevice)\n", provider, meta->getClassName());
+}
 
+bool eu_philjordan_virtio_net::mapVirtioConfigurationSpace()
+{
+	assert(!iomap);
+	assert(pci_dev);
+	PJLogVerbose("virtio-net mapConfigurationSpace(): attempting to map device memory with register 0\n");
+	IODeviceMemory* devmem = pci_dev->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
+	if (!devmem)
+	{
+		IOLog("virtio-net mapConfigurationSpace(): Error! Getting memory descriptor failed.\n");
+		return false;
+	}
+	IOMemoryMap* iomap = devmem->map();
+	devmem = NULL; // no longer needed - do not release, however (see getDeviceMemoryWithRegister() docs)
+	if (!iomap)
+	{
+		IOLog("virtio-net mapConfigurationSpace(): Error! Memory-Mapping configuration space failed.\n");
+		return false;
+	}
+	this->pci_config_mmap = iomap;
+	return true;
+}
 
+void eu_philjordan_virtio_net::virtioResetDevice()
+{
+	assert(pci_dev);
+	assert(pci_config_mmap);
+	setVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_RESET);
+}
+
+uint32_t eu_philjordan_virtio_net::virtioResetInitAndReadFeatureBits()
+{
+	assert(pci_dev);
+	assert(pci_config_mmap);
+	// Reset the device just in case it was previously opened and left in a weird state.
+	virtioResetDevice();
+	// Acknowledge the device, then tell it we're the driver
+	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_ACKNOWLEDGE);
+	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_DRIVER);
+	
+	dev_features_lo = configReadLE32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31);
+	return dev_features_lo;
+}
+
+uint16_t eu_philjordan_virtio_net::virtioReadOptionalConfigFieldsGetDeviceSpecificOffset()
+{
+	assert(pci_dev);
+	assert(dev_features_lo > 0); // if the features have been read, at the very least the BAD_FEATURE bit will be set
+	assert(pci_config_mmap);
+	
+	/* Read out the flexible config space */
+	size_t config_offset = VIRTIO_PCI_CONF_OFFSET_END_HEADER;
+
+#warning TODO: find out how to detect if MSI-X is enabled (I don't think it ever is on Mac OS X)
+	// if (msix_enabled) config_offset += 4;
+	
+	ssize_t hi_features_offset = virtio_hi_feature_bitmap_offset(dev_features_lo, config_offset);
+	dev_features_hi = 0;
+	if (hi_features_offset >= 0)
+	{
+		dev_features_hi = configReadLE32(hi_features_offset);
+		IOLog("virtio-net virtioReadOptionalConfigFieldsGetDeviceSpecificOffset(): Devices reports high feature bit mask %08X.\n", dev_features_hi);
+	}
+	
+	// wherever we are now is the offset for the device-specific configuration space
+	return config_offset;
+}
 
 bool eu_philjordan_virtio_net::start(IOService* provider)
 {
@@ -537,10 +633,7 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	if (!pci)
 	{
 		driver_state = kDriverStateStartFailedUnsupportedDevice;
-		if (!provider)
-			return false;
-		const OSMetaClass* meta = provider->getMetaClass();
-		IOLog("virtio-net start(): Provider (%p) has wrong type: %s (expected IOPCIDevice)\n", provider, meta->getClassName());
+		virtio_net_log_bad_provider(provider);
 		return false;
 	}
 
@@ -553,82 +646,53 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 		return false;
 	work_loop->retain();
 	
-	
-	//IOLog("virtio-net start(): attempting to map device memory with register 0\n");
-	IODeviceMemory* devmem = pci->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
-	if (!devmem)
-	{
-		IOLog("virtio-net start(): Getting memory descriptor failed.\n");
+	if (!mapVirtioConfigurationSpace())
 		return false;
-	}
-	IOMemoryMap* iomap = devmem->map();
-	devmem = NULL; // no longer needed - do not release, however (see getDeviceMemoryWithRegister() docs)
-	if (!iomap)
-	{
-		IOLog("virtio-net start(): Mapping failed.\n");
-		return false;
-	}
-	
-	this->pci_config_mmap = iomap;
 	
 	PJLogVerbose("virtio-net start(): Device Initialisation Sequence\n");
 	
-	// Reset the device just in case it was previously opened and left in a weird state.
-	setVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_RESET);
-
-	// IOLog("virtio-net start(): Device reset\n");
-
-	// Acknowledge the device, then tell it we're the driver
-	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_ACKNOWLEDGE);
-	// IOLog("virtio-net start(): Device acknowledged\n");
-
-	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_DRIVER);
-	// IOLog("virtio-net start(): Device informed of driver\n");
-	
-	uint32_t dev_features = configReadLE32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31);
+	// partially start up the device
+	uint32_t dev_features = virtioResetInitAndReadFeatureBits();
 	virtio_log_supported_features(dev_features);
 	
 	// We can use the notify-on-empty feature to permanently disable transmission interrupts
 	feature_notify_on_empty = (0 != (dev_features & VIRTIO_F_NOTIFY_ON_EMPTY));
+		
+	size_t device_specific_offset = virtioReadOptionalConfigFieldsGetDeviceSpecificOffset();
 	
-	if (!(dev_features & VIRTIO_NET_F_MAC))
+	determineMACAddress(device_specific_offset);
+	detectLinkStatusFeature(device_specific_offset);
+	
+	// we're not actually interested in the device for now until it's enable()d
+	virtioResetDevice();
+	release_obj(pci_config_mmap);
+	pci_dev->close(this);
+	
+	if (!getOutputQueue())
 	{
-#warning TODO: Handle this by generating a random MAC address (is there a pool we can use for this?)
-		driver_state = kDriverStateStartFailedUnsupportedDevice;
-		IOLog("virtio-net start(): Device does not support VIRTIO_NET_F_MAC feature. Don't know how to proceed, aborting.\n");
-		return failDevice(), false;
+		IOLog("virtio-net start(): failed to get output queue\n");
+		return false;
 	}
 	
-	/* Read out the flexible config space */
-	size_t config_offset = VIRTIO_PCI_CONF_OFFSET_END_HEADER;
-
-#warning TODO: find out how to detect if MSI-X is enabled (I don't think it ever is on Mac OS X)
-	// if (msix_enabled) config_offset += 4;
-	
-	ssize_t hi_features_offset = virtio_hi_feature_bitmap_offset(dev_features, config_offset);
-	uint32_t hi_dev_features = 0;
-	if (hi_features_offset >= 0)
+	// create the interface nub
+	interface = NULL;
+	if (!attachInterface((IONetworkInterface **)&interface, false))
 	{
-		hi_dev_features = configReadLE32(hi_features_offset);
-		IOLog("virtio-net start(): Devices reports high feature bit mask %08X.\n", hi_dev_features);
+		IOLog("virtio-net start(): attachInterface() failed, interface = %p [%s].\n",
+			interface, interface ? interface->getMetaClass()->getClassName() : "null");
+		return false;
 	}
+	interface->registerService();
+	PJLogVerbose("virtio-net start(): interface registered.\n");
 	
-	// offset for the device-specific configuration space
-	size_t device_specific_offset = config_offset;
-	
-	// Initialise the receive and transmit virtqueues
-	if (!setupVirtqueue(0, rx_queue))
-		return failDevice(), false;
-	PJLogVerbose("Initialised virtqueue 0 (receive queue) with " PRIuPTR " bytes (%u entries) at " PRIXPTR "\n",
-		rx_queue.buf->getLength(), rx_queue.num, rx_queue.buf->getPhysicalAddress());
+	driver_state = kDriverStateStarted;
+	return true;
+}
 
-	if (!setupVirtqueue(1, tx_queue))
-		return failDevice(), false;
-	PJLogVerbose("Initialised virtqueue 1 (transmit queue) with " PRIuPTR " bytes (%u entries) at " PRIXPTR "\n",
-		tx_queue.buf->getLength(), tx_queue.num, tx_queue.buf->getPhysicalAddress());
-
+void eu_philjordan_virtio_net::determineMACAddress(uint16_t device_specific_offset)
+{
 	// sort out mac address
-	if (dev_features & VIRTIO_NET_F_MAC)
+	if (dev_features_lo & VIRTIO_NET_F_MAC)
 	{
 		for (unsigned i = 0; i < sizeof(mac_address); ++i)
 		{
@@ -640,15 +704,30 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	}
 	else
 	{
-		// generate private MAC address?
+		// generate random MAC address
+		uint32_t rnd1 = random();
+		uint32_t rnd2 = random();
+		mac_address.bytes[0] = (rnd1 & 0xfe) | 0x02; // ensure multicast bit is off and local assignment bit is on
+		mac_address.bytes[1] = (rnd1 >> 8) & 0xff;
+		mac_address.bytes[2] = ((rnd1 >> 16) ^ rnd2) & 0xff;
+		mac_address.bytes[3] = ((rnd1 >> 24) ^ (rnd2 >> 8)) & 0xff;
+		mac_address.bytes[4] = (rnd2 >> 16) & 0xff;
+		mac_address.bytes[5] = (rnd2 >> 24) & 0xff;
+		
+		IOLog("virtio-net start(): Device does not specify its MAC address, randomly generated %02X:%02X:%02X:%02X:%02X:%02X\n",
+			mac_address.bytes[0], mac_address.bytes[1], mac_address.bytes[2],
+			mac_address.bytes[3], mac_address.bytes[4], mac_address.bytes[5]);
 	}
-	
-	// Don't support VIRTIO_NET_F_CTRL_VQ for now
-	
-	// check link status, if possible
+	mac_address_is_valid = true;
+}
+
+// check link status, if possible, and record its configuration space offset for later updates
+void eu_philjordan_virtio_net::detectLinkStatusFeature(uint16_t device_specific_offset)
+{
+	assert(dev_features_lo > 0);
 	status_field_offset = 0;
 	bool link_is_up = true;
-	if (dev_features & VIRTIO_NET_F_STATUS)
+	if (dev_features_lo & VIRTIO_NET_F_STATUS)
 	{
 		status_field_offset = device_specific_offset + offsetof(virtio_net_config, status);
 		uint16_t status = readStatus();
@@ -657,62 +736,47 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 		link_is_up = (status & VIRTIO_NET_S_LINK_UP) != 0;
 	}
 	setLinkStatus((link_is_up ? kIONetworkLinkActive : 0) | kIONetworkLinkValid);
-	
-	// write back supported features
-	uint32_t supported_features = dev_features &
-		(VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS);
-	configWriteLE32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31, supported_features);
-	PJLogVerbose("virtio-net start(): Wrote driver-supported feature bits: 0x%08X\n", supported_features);
-	
-	// tell device we're ready
-	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_DRIVER_OK);
-	PJLogVerbose("virtio-net start(): Device set to 'driver ok' state.\n");
+}
 
-	// fill receive buffer
-	#warning TODO: move this and some of the above to enable()
-	if (!populateReceiveBuffers())
+bool eu_philjordan_virtio_net::beginHandlingInterrupts()
+{
+	PJLogVerbose("virtio-net beginHandlingInterrupts()\n");
+	if (!pci_dev)
 	{
-		if (rx_queue.num_free_desc >= rx_queue.num)
-		{
-			driver_state = kDriverStateStartFailedOutOfMemory;
-			IOLog("virtio-net start(): Failed to populate receive buffers: out of memory.\n");
-			return false;
-		}
-	}
-	PJLogVerbose("virtio-net start(): Populated receive buffers: %u free descriptors left, avail idx %u\n",
-		rx_queue.num_free_desc, rx_queue.avail->idx);
-	
-	if (!getOutputQueue())
-	{
-		IOLog("virtio-net start(): failed to get output queue\n");
+		IOLog("virtio-net beginHandlingInterrupts(): Error! PCI device must be known for generating interrupts.\n");
 		return false;
 	}
-	// create the interface nub
-	interface = NULL;
-	if (!attachInterface((IONetworkInterface **)&interface, false))
-	{
-		IOLog("virtio-net start(): attachInterface() failed, interface = %p [%s].\n",
-			interface, interface ? interface->getMetaClass()->getClassName() : "null");
-		return false;
-	}
-	interface->registerService();
-	PJLogVerbose("virtio-net start(): interface registered.\n");
-
-	// start handling interrupts now that the internal data structures are set up
 	intr_event_source = new IOFilterInterruptEventSource();
-	if (!intr_event_source || !intr_event_source->init(this, &interruptAction, &interruptFilter, pci))
+	if (!intr_event_source || !intr_event_source->init(this, &interruptAction, &interruptFilter, pci_dev))
 	{
+		IOLog("virtio-net beginHandlingInterrupts(): Error! %s interrupt event source failed.\n", intr_event_source ? "Initialising" : "Allocating");
 		release_obj(intr_event_source);
 		return false;
 	}
 	if (kIOReturnSuccess != work_loop->addEventSource(intr_event_source))
+	{
+		IOLog("virtio-net beginHandlingInterrupts(): Error! Adding interrupt event source to work loop failed.\n");
+		release_obj(intr_event_source);
 		return false;
+	}
 	intr_event_source->enable();
-	PJLogVerbose("virtio-net start(): now handling interrupts, good to go.\n");
-	
-	driver_state = kDriverStateStarted;
+	PJLogVerbose("virtio-net beginHandlingInterrupts(): now handling interrupts, good to go.\n");	
 	return true;
 }
+
+void eu_philjordan_virtio_net::endHandlingInterrupts()
+{
+	if (!intr_event_source)
+	{
+		IOLog("virtio-net endHandlingInterrupts(): Warning! Interrupt event source does not exist.\n");
+		return;
+	}
+	
+	work_loop->removeEventSource(intr_event_source);
+	release_obj(intr_event_source);
+}
+
+
 
 bool eu_philjordan_virtio_net::configureInterface(IONetworkInterface *netif)
 {
@@ -814,8 +878,7 @@ IOOutputQueue* eu_philjordan_virtio_net::createOutputQueue()
 {
 	/* For now, go with a gated output queue, as this is the simplest option. Later
 	 * on, we can provide more granular access to the virtqueue mechanism. */
-	uint32_t capacity = max(16, tx_queue.num / 4); // each packet takes 2 buffers, try to always fill up half the virtqueue, hence a quarter
-	IOGatedOutputQueue* queue = IOGatedOutputQueue::withTarget(this, this->getWorkLoop(), capacity);
+	IOGatedOutputQueue* queue = IOGatedOutputQueue::withTarget(this, this->getWorkLoop(), 0 /* capacity = 0: Initially, we can't yet send packets */);
 	PJLogVerbose("virtio-net createOutputQueue(): %p\n", queue);
 	return queue;
 }
@@ -835,17 +898,92 @@ IOReturn eu_philjordan_virtio_net::enable(IONetworkInterface* interface)
 		return kIOReturnBadArgument;
 	}
 	
+	if (!pci_dev->open(this))
+	{
+		IOLog("virtio-net enable(): Opening PCI device failed.\n");
+		return kIOReturnError;
+	}
+	if (!mapVirtioConfigurationSpace())
+		return kIOReturnError;
+
+	// Re-initialise the device
+	uint32_t dev_features = virtioResetInitAndReadFeatureBits();
+
+	// Initialise the receive and transmit virtqueues
+	if (!setupVirtqueue(0, rx_queue))
+		return failDevice(), kIOReturnError;
+	PJLogVerbose("virtio-net enable(): Initialised virtqueue 0 (receive queue) with " PRIuPTR " bytes (%u entries) at " PRIXPTR "\n",
+		rx_queue.buf->getLength(), rx_queue.num, rx_queue.buf->getPhysicalAddress());
+
+	if (!setupVirtqueue(1, tx_queue))
+		return failDevice(), kIOReturnError;
+	PJLogVerbose("virtio-net enable(): Initialised virtqueue 1 (transmit queue) with " PRIuPTR " bytes (%u entries) at " PRIXPTR "\n",
+		tx_queue.buf->getLength(), tx_queue.num, tx_queue.buf->getPhysicalAddress());
+	// Don't support VIRTIO_NET_F_CTRL_VQ for now
+	
+			
+	// write back supported features
+	uint32_t supported_features = dev_features &
+		(VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS);
+	configWriteLE32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31, supported_features);
+	PJLogVerbose("virtio-net enable(): Wrote driver-supported feature bits: 0x%08X\n", supported_features);
+	
+	// tell device we're ready
+	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_DRIVER_OK);
+	PJLogVerbose("virtio-net enable(): Device set to 'driver ok' state.\n");
+
+	// The virtqueues can now be used, and interrupts will begin firing
+	
+	// fill receive queue with as many empty packets as possible
+	if (!populateReceiveBuffers())
+	{
+		// even if we couldn't fill all of it because we ran out of memory, treat partial success as OK.
+		if (rx_queue.num_free_desc >= rx_queue.num)
+		{
+			// really memory-starved, sorry!
+			driver_state = kDriverStateEnableFailedOutOfMemory;
+			IOLog("virtio-net enable(): Failed to populate receive buffers: out of memory.\n");
+			failDevice(); // stop producing interrupts
+			return kIOReturnNoMemory;
+		}
+	}
+	PJLogVerbose("virtio-net enable(): Populated receive buffers: %u free descriptors left, avail idx %u\n",
+		rx_queue.num_free_desc, rx_queue.avail->idx);
+	
+	// enable the output queue
 	IOOutputQueue* output_queue = getOutputQueue();
 	if (!output_queue)
-		return kIOReturnError;
+		return failDevice(), kIOReturnError;
 	uint32_t capacity = max(16, tx_queue.num / 4); // each packet takes 2 buffers, try to always fill up half the virtqueue, hence a quarter
 	output_queue->setCapacity(capacity);
 	output_queue->start();
 	
 	driver_state = kDriverStateEnabled;
+
+	// start handling interrupts now that the internal data structures are set up
+	if (!beginHandlingInterrupts())
+		return failDevice(), kIOReturnError;
+
 	return kIOReturnSuccess;
 }
 
+void eu_philjordan_virtio_net::clearVirtqueuePackets(virtio_net_virtqueue& queue)
+{
+	if (!queue.packets_for_descs)
+		return;
+	for (uint16_t i = 0; i < queue.num; ++i)
+	{
+		virtio_net_packet* packet = queue.packets_for_descs[i];
+		if (!packet)
+			continue;
+
+		if (packet->mbuf)
+			freePacket(packet->mbuf);
+		release_obj(packet->mem);
+		
+		queue.packets_for_descs[i] = NULL;
+	}
+}
 
 IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 {
@@ -855,6 +993,12 @@ IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 		IOLog("virtio-net disable(): Bad driver state %d (expected %d), aborting.\n", driver_state, kDriverStateEnabled);
 		return kIOReturnInvalid;
 	}
+	
+	// disable the device to stop any more interrupts from occurring
+	virtioResetDevice();
+	// unmap and close device
+	release_obj(this->pci_config_mmap);
+	pci_dev->close(this);
 
 	IOOutputQueue* output_queue = getOutputQueue();
 	if (output_queue)
@@ -863,6 +1007,21 @@ IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 		output_queue->setCapacity(0);
 		output_queue->flush();
 	}
+	endHandlingInterrupts();
+
+	handleReceivedPackets();
+	releaseSentPackets();
+	
+	// free any remaining packet resources
+	clearVirtqueuePackets(rx_queue);
+	clearVirtqueuePackets(tx_queue);
+	
+	// Free any pooled packet headers
+	packet_bufdesc_pool->flushCollection();
+
+	// Deallocate virtqueue resources and reset descriptors
+	virtqueue_free(rx_queue);
+	virtqueue_free(tx_queue);
 	
 	driver_state = kDriverStateStarted;
 	return kIOReturnSuccess;
@@ -1253,24 +1412,30 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 	if (provider != this->pci_dev)
 		IOLog("Warning: stopping virtio-net with a different provider!?\n");
 	
+	if (driver_state == kDriverStateEnabled)
+	{
+		IOLog("virtio-net stop(): Warning! Device is still enabled. Disabling it.\n");
+		disable(interface);
+	}
+		
+	if (intr_event_source)
+	{
+		IOLog("virtio-net stop(): Warning! Event source still exists, this should have been shut down by now.\n");
+		endHandlingInterrupts();
+	}
+	
 	packet_bufdesc_pool->flushCollection();
 	release_obj(interface);
-
-	// reset device to disable virtqueues
-	setVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_RESET);
+	clearVirtqueuePackets(rx_queue);
+	clearVirtqueuePackets(tx_queue);
+	virtqueue_free(rx_queue);
+	virtqueue_free(tx_queue);
 	
-#warning TODO: clear/free buffers in queue descriptors
-	
-	release_obj(rx_queue.buf);
-	memset(&rx_queue, 0, sizeof(rx_queue));
-	release_obj(tx_queue.buf);
-	memset(&tx_queue, 0, sizeof(tx_queue));
-	
-	release_obj(this->pci_config_mmap);
-
-	if (this->pci_dev)
-		this->pci_dev->close(this);
+	release_obj(pci_config_mmap);
+	if (pci_dev && pci_dev->isOpen(this))
+		pci_dev->close(this);
 	this->pci_dev = NULL;
+	driver_state = kDriverStateStopped;
 	
 	super::stop(provider);
 }
@@ -1282,20 +1447,16 @@ void eu_philjordan_virtio_net::free()
 	release_obj(packet_bufdesc_pool);
 	release_obj(interface);
 
-	virtqueue_free(rx_queue);
-	release_obj(tx_queue.buf);
-	memset(&tx_queue, 0, sizeof(tx_queue));
-
 	release_obj(this->pci_config_mmap);
 
 	if (intr_event_source)
 	{
-		work_loop->removeEventSource(intr_event_source);
-		release_obj(intr_event_source);
+		IOLog("virtio-net free(): Warning! Event source still exists, this should have been shut down by now.\n");
+		endHandlingInterrupts();
 	}
 	release_obj(work_loop);
 
-	if (this->pci_dev)
+	if (this->pci_dev && this->pci_dev->isOpen(this))
 		this->pci_dev->close(this);
 	this->pci_dev = NULL;
 
@@ -1305,6 +1466,11 @@ void eu_philjordan_virtio_net::free()
 
 IOReturn eu_philjordan_virtio_net::getHardwareAddress(IOEthernetAddress* addrP)
 {
+	if (!mac_address_is_valid)
+	{
+		IOLog("virtio-net getHardwareAddress(): Warning! MAC address not ready, this shouldn't normally happen.\n");
+		return kIOReturnNotReady;
+	}
 	*addrP = mac_address;
 	return kIOReturnSuccess;
 }
