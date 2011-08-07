@@ -762,6 +762,8 @@ IOReturn eu_philjordan_virtio_net::enable(IONetworkInterface* interface)
 	IOOutputQueue* output_queue = getOutputQueue();
 	if (!output_queue)
 		return kIOReturnError;
+	uint32_t capacity = max(16, tx_queue.num / 4); // each packet takes 2 buffers, try to always fill up half the virtqueue, hence a quarter
+	output_queue->setCapacity(capacity);
 	output_queue->start();
 	
 	return kIOReturnSuccess;
