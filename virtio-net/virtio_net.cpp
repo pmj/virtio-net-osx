@@ -449,11 +449,17 @@ void eu_philjordan_virtio_net::interruptAction(IOInterruptEventSource* source, i
 	{
 		handleReceivedPackets();
 		populateReceiveBuffers();
+		/*
+		IOLog("virtio-net interruptAction(): Populated receive buffers: %u free descriptors left, avail idx %u\n",
+			rx_queue.num_free_desc, rx_queue.avail->idx);
+		*/
 	}
 	// Dispose of any completed sent packets
 	if (tx_queue.last_used_idx != tx_queue.used->idx)
 	{
-	
+		kprintf("TX queue last used idx: %u, tx_queue used: %p, desc: %p, avail: %p, free: %u, head: %u\n",
+			tx_queue.last_used_idx, tx_queue.used, tx_queue.desc, tx_queue.avail, tx_queue.num_free_desc, tx_queue.free_desc_head);
+		IOLog("TX queue last used idx (%u) differs from current (%u)\n", tx_queue.last_used_idx, tx_queue.used->idx);
 	}
 }
 
@@ -484,16 +490,6 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	if (!work_loop)
 		return false;
 	work_loop->retain();
-	
-	intr_event_source = new IOFilterInterruptEventSource();
-	if (!intr_event_source || !intr_event_source->init(this, &interruptAction, &interruptFilter, pci))
-	{
-		release_obj(intr_event_source);
-		return false;
-	}
-	if (kIOReturnSuccess != work_loop->addEventSource(intr_event_source))
-		return false;
-	intr_event_source->enable();
 	
 	
 	//IOLog("virtio-net start(): attempting to map device memory with register 0\n");
@@ -631,7 +627,19 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 		return false;
 	}
 	interface->registerService();
-	IOLog("virtio-net start(): interface registered, good to go.\n");
+	IOLog("virtio-net start(): interface registered.\n");
+
+	// start handling interrupts now that the internal data structures are set up
+	intr_event_source = new IOFilterInterruptEventSource();
+	if (!intr_event_source || !intr_event_source->init(this, &interruptAction, &interruptFilter, pci))
+	{
+		release_obj(intr_event_source);
+		return false;
+	}
+	if (kIOReturnSuccess != work_loop->addEventSource(intr_event_source))
+		return false;
+	intr_event_source->enable();
+	IOLog("virtio-net start(): now handling interrupts, good to go.\n");
 	
 	return true;
 }
@@ -736,7 +744,8 @@ IOOutputQueue* eu_philjordan_virtio_net::createOutputQueue()
 {
 	/* For now, go with a gated output queue, as this is the simplest option. Later
 	 * on, we can provide more granular access to the virtqueue mechanism. */
-	IOGatedOutputQueue* queue = IOGatedOutputQueue::withTarget(this, this->getWorkLoop());
+	uint32_t capacity = max(16, tx_queue.num / 4); // each packet takes 2 buffers, try to always fill up half the virtqueue, hence a quarter
+	IOGatedOutputQueue* queue = IOGatedOutputQueue::withTarget(this, this->getWorkLoop(), capacity);
 	IOLog("virtio-net createOutputQueue(): %p\n", queue);
 	return queue;
 }
@@ -750,6 +759,11 @@ IOReturn eu_philjordan_virtio_net::enable(IONetworkInterface* interface)
 		return kIOReturnBadArgument;
 	}
 	
+	IOOutputQueue* output_queue = getOutputQueue();
+	if (!output_queue)
+		return kIOReturnError;
+	output_queue->start();
+	
 	return kIOReturnSuccess;
 }
 
@@ -757,6 +771,14 @@ IOReturn eu_philjordan_virtio_net::enable(IONetworkInterface* interface)
 IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 {
 	IOLog("virtio-net disable()\n");
+	IOOutputQueue* output_queue = getOutputQueue();
+	if (output_queue)
+	{
+		output_queue->stop();
+		output_queue->setCapacity(0);
+		output_queue->flush();
+	}
+	
 	return kIOReturnSuccess;
 }
 	
@@ -792,9 +814,12 @@ static int32_t vring_pop_free_desc(virtio_net_virtqueue& queue)
 
 static void vring_push_free_desc(virtio_net_virtqueue& queue, uint16_t free_idx)
 {
+	assert(free_idx < queue.num);
 	queue.desc[free_idx].next = queue.free_desc_head;
 	queue.desc[free_idx].flags = queue.num_free_desc > 0 ? VRING_DESC_F_NEXT : 0;
+	queue.packets_for_descs[free_idx] = NULL;
 	queue.free_desc_head = free_idx;
+	++queue.num_free_desc;
 }
 
 bool eu_philjordan_virtio_net::notifyQueueAvailIdx(virtio_net_virtqueue& queue, uint16_t new_avail_idx)
@@ -840,8 +865,8 @@ bool eu_philjordan_virtio_net::populateReceiveBuffers()
 		else
 		{
 			packet_mem = IOBufferMemoryDescriptor::inTaskWithOptions(
-			kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut | kIOInhibitCache, sizeof(virtio_net_packet),
-			sizeof(void*) /* align to pointer */);
+				kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut | kIOInhibitCache, sizeof(virtio_net_packet),
+				sizeof(void*) /* align to pointer */);
 		}
 		
 		if (!packet_mem)
@@ -923,12 +948,16 @@ bool eu_philjordan_virtio_net::populateReceiveBuffers()
 
 void eu_philjordan_virtio_net::handleReceivedPackets()
 {
+	if (!work_loop || !work_loop->inGate())
+	{
+		kprintf("virtio-net handleReceivedPackets(): Warning! Not holding work-loop gate!\n");
+	}
 	unsigned packets_submitted = 0;
 	//IOLog("virtio-net: handleReceivedPackets(): rx queue used: %u, last time: %u\n",
 	//	rx_queue.used->idx, rx_queue.last_used_idx);
 	while (rx_queue.last_used_idx != rx_queue.used->idx)
 	{
-		vring_used_elem& used = rx_queue.used->ring[rx_queue.last_used_idx];
+		vring_used_elem& used = rx_queue.used->ring[rx_queue.last_used_idx % rx_queue.num];
 		uint16_t used_desc = used.id;
 #warning TODO: defend against out-of-range indices
 		virtio_net_packet* packet = rx_queue.packets_for_descs[used_desc];
@@ -947,20 +976,29 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 		// this buffer should correspond to a packet we queued; pass it to the network system
 		if (packet)
 		{
-			if (interface && len <= kIOEthernetMaxPacketSize)
+			rx_queue.packets_for_descs[used_desc] = NULL;
+
+			if (interface && len <= kIOEthernetMaxPacketSize && packet->mbuf)
 			{
 				interface->inputPacket(packet->mbuf, len, IONetworkInterface::kInputOptionQueuePacket);
 				++packets_submitted;
 			}
 			else
 			{
-				IOLog("virtio-net handleReceivedPackets(): warning, no interface (%p) or bad packet length (%u) reported by device. Ignoring packet.\n",
-					interface, len);
-				mbuf_free(packet->mbuf);
+				kprintf("virtio-net handleReceivedPackets(): warning, no interface (%p), no mbuf (%p) or bad packet length (%u) reported by device. Ignoring packet.\n",
+					interface, packet->mbuf, len);
+				kprintf("virtio-net handleReceivedPackets(): used ring entry: id=%u (0x%x), len=%u\n", used.id, used.id, used.len);
+				kprintf("virtio-net handleReceivedPackets(): packet dump: flags=0x%02x, gso_type=0x%02x, hdr_len=%u(0x%04x), gso_size=%u(0x%04x) csum_start=%u csum_offset=%u\n",
+					packet->header.flags, packet->header.gso_type, packet->header.hdr_len, packet->header.hdr_len,
+					packet->header.gso_size, packet->header.gso_size, packet->header.csum_start, packet->header.csum_offset);
+				kprintf("virtio-net handleReceivedPackets(): packet dump: mbuf=%p, mem=%p\n", packet->mbuf, packet->mem);
+				if (packet->mbuf)
+					mbuf_free(packet->mbuf);
 			}
 			packet->mbuf = NULL;
 			IOBufferMemoryDescriptor* mem = packet->mem;
-			packet_bufdesc_pool->setObject(mem);
+			if (mem)
+				packet_bufdesc_pool->setObject(mem);
 			release_obj(mem);
 		}
 		else
@@ -986,6 +1024,10 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 #warning TODO: Defend against infinite loop (out of range descriptors, circular lists)
 			uint16_t next = rx_queue.desc[desc].next;
 			bool has_next = (0 != (rx_queue.desc[desc].flags & VRING_DESC_F_NEXT));
+			rx_queue.desc[desc].addr = 0;
+			rx_queue.desc[desc].len = 0;
+			rx_queue.desc[desc].flags = 0;
+			rx_queue.desc[desc].next = 0;
 			vring_push_free_desc(rx_queue, desc);
 			if (!has_next)
 				break;
@@ -996,6 +1038,7 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 	if (packets_submitted > 0)
 	{
 		interface->flushInputQueue();
+		//IOLog("virtio-net handleReceivedPackets(): %u received\n", packets_submitted);
 	}
 }
 
