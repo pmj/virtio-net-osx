@@ -418,9 +418,11 @@ bool eu_philjordan_virtio_net::interruptFilter(OSObject* me, IOFilterInterruptEv
 		virtio_net->last_isr = isr;
 		if (isr & VIRTIO_PCI_DEVICE_ISR_CONF_CHANGE)
 		{
-			virtio_net->received_config_change = true;
+			OSTestAndSet(0, &virtio_net->received_config_change);
 		}
-#warning TODO: disable further interrupts until the handler has run
+		// disable further interrupts until the handler has run
+		virtio_net->rx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
+		virtio_net->tx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
 		return true;
 	}
 	return false;
@@ -443,26 +445,48 @@ void eu_philjordan_virtio_net::interruptAction(IOInterruptEventSource* source, i
 	{
 		IOLog("virtio-net interruptAction(): Unknown bits set in ISR status register: %02X\n", unknown_isr);
 	}
-	
-	// Handle received packets
-	if (rx_queue.last_used_idx != rx_queue.used->idx)
+	bool config_change = !OSTestAndClear(0, &received_config_change);
+	if (config_change)
 	{
-		handleReceivedPackets();
-		populateReceiveBuffers();
-		/*
-		IOLog("virtio-net interruptAction(): Populated receive buffers: %u free descriptors left, avail idx %u\n",
-			rx_queue.num_free_desc, rx_queue.avail->idx);
-		*/
+		IOLog("virtio-net interruptAction(): received a configuration change! (currently unhandled)\n");
 	}
-	// Dispose of any completed sent packets
-	if (tx_queue.last_used_idx != tx_queue.used->idx)
+	
+	bool has_reenabled_interrupts = false;
+	
+	while (true)
 	{
-		/*kprintf("TX queue last used idx: %u, tx_queue used: %p, desc: %p, avail: %p, free: %u, head: %u\n",
-			tx_queue.last_used_idx, tx_queue.used, tx_queue.desc, tx_queue.avail, tx_queue.num_free_desc, tx_queue.free_desc_head);
-		*/
-		//IOLog("TX queue last used idx (%u) differs from current (%u), freeing packets.\n", tx_queue.last_used_idx, tx_queue.used->idx);
+		// Handle received packets
+		if (rx_queue.last_used_idx != rx_queue.used->idx)
+		{
+			handleReceivedPackets();
+			populateReceiveBuffers();
+			/*
+			IOLog("virtio-net interruptAction(): Populated receive buffers: %u free descriptors left, avail idx %u\n",
+				rx_queue.num_free_desc, rx_queue.avail->idx);
+			*/
+		}
+		// Dispose of any completed sent packets
+		if (tx_queue.last_used_idx != tx_queue.used->idx)
+		{
+			/*kprintf("TX queue last used idx: %u, tx_queue used: %p, desc: %p, avail: %p, free: %u, head: %u\n",
+				tx_queue.last_used_idx, tx_queue.used, tx_queue.desc, tx_queue.avail, tx_queue.num_free_desc, tx_queue.free_desc_head);
+			*/
+			//IOLog("TX queue last used idx (%u) differs from current (%u), freeing packets.\n", tx_queue.last_used_idx, tx_queue.used->idx);
+			
+			releaseSentPackets();
+		}
 		
-		releaseSentPackets();
+		if (has_reenabled_interrupts)
+			break;
+		
+		// re-enable interrupts, then re-check for used buffers to avoid a race condition
+		rx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
+		// only enable transmission interrupts if we won't be notified for an empty queue anyway
+		if (!feature_notify_on_empty)
+			tx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
+		OSSynchronizeIO();
+		
+		has_reenabled_interrupts = true;
 	}
 }
 
@@ -528,6 +552,9 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	
 	uint32_t dev_features = configReadLE32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31);
 	virtio_log_supported_features(dev_features);
+	
+	// We can use the notify-on-empty feature to permanently disable transmission interrupts
+	feature_notify_on_empty = (0 != (dev_features & VIRTIO_F_NOTIFY_ON_EMPTY));
 	
 	if (!(dev_features & VIRTIO_NET_F_MAC))
 	{

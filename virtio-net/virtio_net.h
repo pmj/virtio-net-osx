@@ -138,8 +138,11 @@ protected:
 	
 	/// ISR status register value in last successful interrupt
 	uint8_t last_isr;
-	/// Toggled on if the configuration change bit was detected in the interrupt handler
-	bool received_config_change;
+	
+	/// true if the device supports the VIRTIO_F_NOTIFY_ON_EMPTY feature
+	bool feature_notify_on_empty;
+	/// Low bit is atomically toggled on if the configuration change bit was detected in the interrupt handler
+	volatile UInt8 received_config_change;
 	
 	IOWorkLoop* work_loop;
 	IOFilterInterruptEventSource* intr_event_source;
