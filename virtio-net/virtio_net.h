@@ -91,6 +91,14 @@ protected:
 	void configWriteLE16(uint16_t offset, uint16_t val);
 	uint16_t configReadLE16(uint16_t offset);
 	
+	/** Allocates/recycles the header buffer, sets up the packet data buffers,
+	 * writes the virtqueue descriptors, and the head's packets_for_descs entry.
+	 * Then fills out the 'available' ring buffer
+	 * entry at the specified index (modulo queue size), incrementing said index
+	 * as necessary. Returns true on success, false on failure. The mbuf is not
+	 * freed in either case (but referenced as a buffer in case of success).
+	 */
+	bool addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx);
 	bool populateReceiveBuffers();
 
 	bool notifyQueueAvailIdx(virtio_net_virtqueue& queue, uint16_t new_avail_idx);

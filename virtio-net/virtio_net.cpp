@@ -837,6 +837,97 @@ bool eu_philjordan_virtio_net::notifyQueueAvailIdx(virtio_net_virtqueue& queue, 
 	return false;
 }
 
+bool eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx)
+{
+	// recycle or allocate memory for the packet virtio header buffer
+	IOBufferMemoryDescriptor* packet_mem = OSDynamicCast(IOBufferMemoryDescriptor, packet_bufdesc_pool->getAnyObject());
+	if (packet_mem)
+	{
+		packet_mem->retain();
+		packet_bufdesc_pool->removeObject(packet_mem);
+	}
+	else
+	{
+		packet_mem = IOBufferMemoryDescriptor::inTaskWithOptions(
+			kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut | kIOInhibitCache, sizeof(virtio_net_packet),
+			sizeof(void*) /* align to pointer */);
+	}
+	
+	if (!packet_mem)
+		return false;
+	virtio_net_packet* packet = static_cast<virtio_net_packet*>(packet_mem->getBytesNoCopy());
+
+	packet->mbuf = packet_mbuf;
+	packet->mem = packet_mem;
+
+	// get the necessary descriptors
+	const int32_t head_desc = vring_pop_free_desc(queue);
+	if (head_desc < 0)
+		return release_obj(packet_mem), false;
+	const int32_t main_desc = vring_pop_free_desc(queue);
+	if (main_desc < 0)
+		return vring_push_free_desc(queue, head_desc), release_obj(packet_mem), false;
+
+	// set up the buffer descriptors
+	const uint16_t direction_flag = for_writing ? VRING_DESC_F_WRITE : 0;
+	
+	vring_desc& head_buf = queue.desc[head_desc];
+	head_buf.addr = packet_mem->getPhysicalAddress() + offsetof(virtio_net_packet, header);
+	head_buf.len = sizeof(virtio_net_hdr);
+	head_buf.flags = VRING_DESC_F_NEXT | direction_flag;
+	head_buf.next = main_desc;
+
+	const size_t len = mbuf_len(packet_mbuf);
+	
+	vring_desc& main_buf = queue.desc[main_desc];
+	void* data = mbuf_data(packet_mbuf);
+	main_buf.addr = mbuf_data_to_physical(data);
+	addr64_t to_next_page = trunc_page_64(main_buf.addr + PAGE_SIZE_64);
+	
+	if (to_next_page >= len)
+	{
+		// the whole packet is contained in a physical page
+		main_buf.len = len;
+		main_buf.flags = direction_flag;
+		main_buf.next = UINT16_MAX;
+	}
+	else
+	{
+		// split packet into 2 buffers
+		main_buf.len = static_cast<uint32_t>(to_next_page);
+		main_buf.flags = head_buf.flags;
+		int32_t extra_desc = vring_pop_free_desc(queue);
+		if (extra_desc < 0)
+			return vring_push_free_desc(queue, main_desc), vring_push_free_desc(queue, head_desc),
+				release_obj(packet_mem), false;
+		main_buf.next = extra_desc;
+		vring_desc& extra_buf = queue.desc[extra_desc];
+		void* extra_data = static_cast<char*>(data) + to_next_page;
+		extra_buf.addr = mbuf_data_to_physical(extra_data);
+		extra_buf.len = static_cast<uint32_t>(len - to_next_page);
+		assert(extra_buf.len <= PAGE_SIZE); // this is only true because the max size for ethernet packets is smaller than the page size. Otherwise, we'd need to support an arbitrary number of extra buffers
+		extra_buf.flags = direction_flag;
+		extra_buf.next = UINT16_MAX;
+	}
+	
+	// initialise the network header
+	packet->header.flags = 0;
+	packet->header.gso_type = VIRTIO_NET_HDR_GSO_NONE;
+	packet->header.hdr_len = sizeof(packet->header);
+	packet->header.gso_size = 0;
+	packet->header.csum_start = 0;
+	packet->header.csum_offset = 0;
+
+	// ensure we can find it again
+	queue.packets_for_descs[head_desc] = packet;
+	
+	// add the chain to the available ring
+	queue.avail->ring[at_avail_idx % queue.num] = head_desc;
+	++at_avail_idx;
+	
+	return true;
+}
+
 /// Fill the receive queue with buffers for the first time and make them available to the device
 /** Each packet will have a 10-byte header (virtio_net_hdr) and an mbuf with the
  * maximum ethernet packet size. Separate virtqueue buffers are used for header
@@ -858,88 +949,18 @@ bool eu_philjordan_virtio_net::populateReceiveBuffers()
 		if (!packet_mbuf)
 			return (added && notifyQueueAvailIdx(rx_queue, avail_idx)), false;
 		
-		IOBufferMemoryDescriptor* packet_mem = OSDynamicCast(IOBufferMemoryDescriptor, packet_bufdesc_pool->getAnyObject());
-		if (packet_mem)
 		{
-			packet_mem->retain();
-			packet_bufdesc_pool->removeObject(packet_mem);
-		}
-		else
-		{
-			packet_mem = IOBufferMemoryDescriptor::inTaskWithOptions(
-				kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut | kIOInhibitCache, sizeof(virtio_net_packet),
-				sizeof(void*) /* align to pointer */);
+			size_t len = mbuf_len(packet_mbuf);
+			if (len != kIOEthernetMaxPacketSize)
+				kprintf("virtio-net populateReceiveBuffers(): unexpected new packet length %lu (wanted: %u)\n",
+					len, kIOEthernetMaxPacketSize);
+			assert(len == kIOEthernetMaxPacketSize);
 		}
 		
-		if (!packet_mem)
-			return (added && notifyQueueAvailIdx(rx_queue, avail_idx)), freePacket(packet_mbuf), false;
+		// this will increment avail_idx if successful
+		if (!addPacketToQueue(packet_mbuf, rx_queue, true /* packet is writeable */, avail_idx))
+			return freePacket(packet_mbuf), (added && notifyQueueAvailIdx(rx_queue, avail_idx)), false;
 		
-		virtio_net_packet* packet = static_cast<virtio_net_packet*>(packet_mem->getBytesNoCopy());
-
-		packet->mbuf = packet_mbuf;
-		packet->mem = packet_mem;
-		
-		// get the necessary descriptors
-		int32_t head_desc = vring_pop_free_desc(rx_queue);
-		if (head_desc < 0)
-			return (added && notifyQueueAvailIdx(rx_queue, avail_idx)),
-				freePacket(packet_mbuf), release_obj(packet_mem), false;
-		int32_t main_desc = vring_pop_free_desc(rx_queue);
-		if (main_desc < 0)
-			return (added && notifyQueueAvailIdx(rx_queue, avail_idx)), 
-				vring_push_free_desc(rx_queue, head_desc), freePacket(packet_mbuf), release_obj(packet_mem), false;
-		
-		// set up the buffer descriptors
-		vring_desc& head_buf = rx_queue.desc[head_desc];
-		head_buf.addr = packet_mem->getPhysicalAddress() + offsetof(virtio_net_packet, header);
-		head_buf.len = sizeof(virtio_net_hdr);
-		head_buf.flags = VRING_DESC_F_NEXT | VRING_DESC_F_WRITE;
-		head_buf.next = main_desc;
-		
-		vring_desc& main_buf = rx_queue.desc[main_desc];
-		void* data = mbuf_data(packet_mbuf);
-		main_buf.addr = mbuf_data_to_physical(data);
-		addr64_t to_next_page = trunc_page_64(main_buf.addr + PAGE_SIZE_64);
-		if (to_next_page >= kIOEthernetMaxPacketSize)
-		{
-			// the whole packet is contained in a physical page
-			main_buf.len = kIOEthernetMaxPacketSize;
-			main_buf.flags = VRING_DESC_F_WRITE;
-			main_buf.next = UINT16_MAX;
-		}
-		else
-		{
-			// split packet into 2 buffers
-			main_buf.len = static_cast<uint32_t>(to_next_page);
-			main_buf.flags = head_buf.flags;
-			int32_t extra_desc = vring_pop_free_desc(rx_queue);
-			if (extra_desc < 0)
-				return (added && notifyQueueAvailIdx(rx_queue, avail_idx)),
-					vring_push_free_desc(rx_queue, main_desc), vring_push_free_desc(rx_queue, head_desc),
-					freePacket(packet_mbuf), release_obj(packet_mem), false;
-			main_buf.next = extra_desc;
-			vring_desc& extra_buf = rx_queue.desc[extra_desc];
-			void* extra_data = static_cast<char*>(data) + to_next_page;
-			extra_buf.addr = mbuf_data_to_physical(extra_data);
-			extra_buf.len = static_cast<uint32_t>(kIOEthernetMaxPacketSize - to_next_page);
-			assert(extra_buf.len <= PAGE_SIZE);
-			extra_buf.flags = VRING_DESC_F_WRITE;
-			extra_buf.next = UINT16_MAX;
-		}
-		
-		// initialise the network header
-		packet->header.flags = 0;
-		packet->header.gso_type = VIRTIO_NET_HDR_GSO_NONE;
-		packet->header.hdr_len = sizeof(packet->header);
-		packet->header.gso_size = 0;
-		packet->header.csum_start = 0;
-		packet->header.csum_offset = 0;
-		
-		// ensure we can find it again
-		rx_queue.packets_for_descs[head_desc] = packet;
-		
-		rx_queue.avail->ring[avail_idx % rx_queue.num] = head_desc;
-		++avail_idx;
 		added = true;
 	}
 	if (added)
