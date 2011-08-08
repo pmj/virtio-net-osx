@@ -17,11 +17,11 @@
 	<key>CFBundlePackageType</key>
 	<string>KEXT</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1</string>
+	<string>0.2</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleVersion</key>
-	<string>0.1</string>
+	<string>0.2</string>
 	<key>IOKitPersonalities</key>
 	<dict>
 		<key>VirtioNet</key>
@@ -44,15 +44,15 @@
 		</dict>
 	</dict>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2011 Phil Jordan. Dual-licensed under the 3-Clause BSD License and the zLib license.</string>
+	<string>Copyright © 2011 Phil Jordan. Triple-licensed under the zLib license, the 3-Clause BSD License and the MIT license. Portions Copyright © 2007, 2009, IBM	 Corporation and 2011, Red Hat, Inc. 3-clause BSD license.</string>
 	<key>OSBundleLibraries</key>
 	<dict>
-		<key>com.apple.kpi.bsd</key>
-		<string>9.0.0</string>
 		<key>com.apple.iokit.IONetworkingFamily</key>
 		<string>1.4.3</string>
 		<key>com.apple.iokit.IOPCIFamily</key>
 		<string>1.6</string>
+		<key>com.apple.kpi.bsd</key>
+		<string>9.0.0</string>
 		<key>com.apple.kpi.iokit</key>
 		<string>9.0.0</string>
 		<key>com.apple.kpi.libkern</key>
