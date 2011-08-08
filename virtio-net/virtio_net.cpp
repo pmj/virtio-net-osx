@@ -495,7 +495,9 @@ void eu_philjordan_virtio_net::interruptAction(IOInterruptEventSource* source, i
 				}
 				else
 				{
-					setLinkStatus(((status & VIRTIO_NET_S_LINK_UP) ? kIONetworkLinkActive : 0) | kIONetworkLinkValid);
+					bool link_is_up = (status & VIRTIO_NET_S_LINK_UP) != 0;
+					IOLog("virtio-net: Device signaled link status change, link is now %s.\n", link_is_up ? "up" : "down");
+					setLinkStatus((link_is_up ? kIONetworkLinkActive : 0) | kIONetworkLinkValid);
 				}
 			}
 			else
