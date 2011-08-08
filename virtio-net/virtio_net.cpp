@@ -718,7 +718,7 @@ void eu_philjordan_virtio_net::determineMACAddress(uint16_t device_specific_offs
 		{
 			mac_address.bytes[i] = configRead8(device_specific_offset + offsetof(virtio_net_config, mac[i]));
 		}
-		IOLog("virtio-net start(): Determined MAC address: %02X:%02X:%02X:%02X:%02X:%02X\n",
+		PJLogVerbose("virtio-net start(): Determined MAC address: %02X:%02X:%02X:%02X:%02X:%02X\n",
 			mac_address.bytes[0], mac_address.bytes[1], mac_address.bytes[2],
 			mac_address.bytes[3], mac_address.bytes[4], mac_address.bytes[5]);
 	}
