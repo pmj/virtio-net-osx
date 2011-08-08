@@ -71,6 +71,16 @@ static inline bool is_pow2(uint16_t num)
 	return 0u == (num & (num - 1));
 }
 
+template <typename T> void release_obj(T*& obj)
+{
+	OSObject* const o = obj;
+	if (o)
+	{
+		o->release();
+		obj = NULL;
+	}
+}
+
 bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 {
 	PJLogVerbose("virtio-net init()\n");
@@ -83,6 +93,14 @@ bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 	packet_bufdesc_pool = OSSet::withCapacity(16);
 	if (!packet_bufdesc_pool)
 		return false;
+	
+	packet_memory_cursor = new IOMbufMemoryCursor();
+	if (!packet_memory_cursor || !packet_memory_cursor->initWithSpecification(outputPacketSegment, UINT32_MAX, tx_queue.num - 1))
+	{
+		IOLog("virtio-net init(): Failed to %s memory cursor.\n", packet_memory_cursor ? "initialise" : "allocate");
+		release_obj(packet_memory_cursor);
+		return false;
+	}
 	
 	pci_dev = NULL;
 	rx_queue.buf = NULL;
@@ -107,16 +125,6 @@ static int64_t pci_id_data_to_uint(OSObject* property_obj)
 		id = static_cast<uint16_t>(OSReadLittleInt16(mem, 0));
 	}
 	return id;
-}
-
-template <typename T> void release_obj(T*& obj)
-{
-	OSObject* const o = obj;
-	if (o)
-	{
-		o->release();
-		obj = NULL;
-	}
 }
 
 IOService* eu_philjordan_virtio_net::probe(IOService* provider, SInt32* score)
@@ -629,6 +637,16 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	if (!super::start(provider))
 		return false;
 
+	UInt32 mtu = 0;
+	if (kIOReturnSuccess != getMaxPacketSize(&mtu))
+	{	
+		IOLog("Failed to determine MTU!\n");
+	}
+	else
+	{
+		IOLog("Reported MTU: %lu bytes\n", mtu);
+	}
+
 	IOPCIDevice* pci = OSDynamicCast(IOPCIDevice, provider);
 	if (!pci)
 	{
@@ -1026,7 +1044,7 @@ IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 	driver_state = kDriverStateStarted;
 	return kIOReturnSuccess;
 }
-	
+
 UInt32 eu_philjordan_virtio_net::outputPacket(mbuf_t buffer, void *param)
 {
 	if (tx_queue.num_free_desc < 3)
@@ -1101,9 +1119,67 @@ bool eu_philjordan_virtio_net::notifyQueueAvailIdx(virtio_net_virtqueue& queue, 
 	return false;
 }
 
-bool eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx)
+/// Structure for tracking the progress of turning a packet into virtqueue buffers across outputPacketSegment() calls
+struct virtio_net_cursor_segment_context
 {
-	// recycle or allocate memory for the packet virtio header buffer
+	eu_philjordan_virtio_net* me;
+	
+	virtio_net_virtqueue& queue;
+	/// Tracks the total length across all added segments, starts as 0.
+	uint32_t total_length;
+	/// Tracks the number of non-zero segments, even in the event of an error.
+	uint16_t num_segments;
+	/// Tracks the number of segments which were successfully added
+	uint16_t segments_created;
+	/// Descriptor index for the current tail of the buffer chain (initially the header buffer desc)
+	uint16_t tail_desc;
+	/// Bits to OR into the buffer's "flags" field to indicate reading or writing
+	uint8_t buffer_direction_flag;
+	
+	/// A problem has occurred, further outputPacketSegment() calls will not do anything except increment the segment counter
+	bool error;
+	/// The error was that descriptor allocation failed
+	bool out_of_descriptors;
+	
+};
+void eu_philjordan_virtio_net::outputPacketSegment(IOMemoryCursor::PhysicalSegment segment, void* segment_context, UInt32 segmentIndex)
+{
+	// ignore zero-length segments
+	if (segment.length == 0)
+		return;
+	
+	//IOLog("virtio-net outputPacketSegment(): segment %lu at 0x%08lX, length %lu.\n", segmentIndex, segment.location, segment.length);
+	virtio_net_cursor_segment_context* ctx = static_cast<virtio_net_cursor_segment_context*>(segment_context);
+	ctx->num_segments++;
+	if (ctx->error)
+		return;
+	
+			
+	const int32_t desc = vring_pop_free_desc(ctx->queue);
+	if (desc < 0)
+	{
+		IOLog("virtio-net outputPacketSegment(): failed to allocate descriptor.\n");
+		ctx->error = ctx->out_of_descriptors = true;
+		return;
+	}
+	vring_desc& prev_buf = ctx->queue.desc[ctx->tail_desc];
+	prev_buf.next = desc;
+	prev_buf.flags |= VRING_DESC_F_NEXT;
+
+	vring_desc& buf = ctx->queue.desc[desc];
+	buf.addr = segment.location;
+	buf.len = segment.length;
+	buf.flags = ctx->buffer_direction_flag;
+	buf.next = UINT16_MAX;
+	
+	ctx->tail_desc = desc;
+	++ctx->segments_created;
+	ctx->total_length += segment.length;
+	//IOLog("virtio-net outputPacketSegment(): Added segment as buffer in descriptor %u, total packet length so far: %u.\n", desc, ctx->total_length);
+}
+
+IOBufferMemoryDescriptor* eu_philjordan_virtio_net::allocPacketHeaderBuffer()
+{
 	IOBufferMemoryDescriptor* packet_mem = OSDynamicCast(IOBufferMemoryDescriptor, packet_bufdesc_pool->getAnyObject());
 	if (packet_mem)
 	{
@@ -1116,7 +1192,13 @@ bool eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_v
 			kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut | kIOInhibitCache, sizeof(virtio_net_packet),
 			sizeof(void*) /* align to pointer */);
 	}
-	
+	return packet_mem;
+}
+
+bool eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx)
+{
+	// recycle or allocate memory for the packet virtio header buffer
+	IOBufferMemoryDescriptor* packet_mem = allocPacketHeaderBuffer();
 	if (!packet_mem)
 		return false;
 	virtio_net_packet* packet = static_cast<virtio_net_packet*>(packet_mem->getBytesNoCopy());
@@ -1124,55 +1206,43 @@ bool eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_v
 	packet->mbuf = packet_mbuf;
 	packet->mem = packet_mem;
 
-	// get the necessary descriptors
+	// get the necessary descriptor for the head
 	const int32_t head_desc = vring_pop_free_desc(queue);
 	if (head_desc < 0)
 		return release_obj(packet_mem), false;
-	const int32_t main_desc = vring_pop_free_desc(queue);
-	if (main_desc < 0)
-		return vring_push_free_desc(queue, head_desc), release_obj(packet_mem), false;
 
-	// set up the buffer descriptors
+	// set up the header buffer descriptor
 	const uint16_t direction_flag = for_writing ? VRING_DESC_F_WRITE : 0;
 	
 	vring_desc& head_buf = queue.desc[head_desc];
 	head_buf.addr = packet_mem->getPhysicalAddress() + offsetof(virtio_net_packet, header);
 	head_buf.len = sizeof(virtio_net_hdr);
-	head_buf.flags = VRING_DESC_F_NEXT | direction_flag;
-	head_buf.next = main_desc;
+	head_buf.flags = direction_flag;
+	head_buf.next = 0;
 
-	const size_t len = mbuf_len(packet_mbuf);
+	struct virtio_net_cursor_segment_context segment_context = {
+		this, queue, 0, 0, 0, head_desc, direction_flag, false, false
+	};
 	
-	vring_desc& main_buf = queue.desc[main_desc];
-	void* data = mbuf_data(packet_mbuf);
-	main_buf.addr = mbuf_data_to_physical(data);
-	addr64_t to_next_page = trunc_page_64(main_buf.addr + PAGE_SIZE_64);
-	
-	if (to_next_page >= len)
+	//IOLog("virtio-net addPacketToQueue(): begin generating physical segments.\n");
+	uint32_t segments = packet_memory_cursor->genPhysicalSegments(
+		packet_mbuf, &segment_context, queue.num_free_desc, true /* coalesce if necessary */);
+	if (segments == 0 || segment_context.error)
 	{
-		// the whole packet is contained in a physical page
-		main_buf.len = len;
-		main_buf.flags = direction_flag;
-		main_buf.next = UINT16_MAX;
+		IOLog("virtio-net addPacketToQueue(): an error occurred. %u segments produced, "
+			"%u non-zero segments encountered, %u successfully added (%u bytes), error: %s, out of descriptors: %s.\n",
+			segments, segment_context.num_segments, segment_context.segments_created,
+			segment_context.total_length, segment_context.error ? "yes" : "no", segment_context.out_of_descriptors ? "yes" : "no");
+		freeDescriptorChain(queue, head_desc);
+		release_obj(packet_mem);
+		return false;
 	}
 	else
 	{
-		// split packet into 2 buffers
-		main_buf.len = static_cast<uint32_t>(to_next_page);
-		main_buf.flags = head_buf.flags;
-		int32_t extra_desc = vring_pop_free_desc(queue);
-		if (extra_desc < 0)
-			return vring_push_free_desc(queue, main_desc), vring_push_free_desc(queue, head_desc),
-				release_obj(packet_mem), false;
-		main_buf.next = extra_desc;
-		vring_desc& extra_buf = queue.desc[extra_desc];
-		void* extra_data = static_cast<char*>(data) + to_next_page;
-		extra_buf.addr = mbuf_data_to_physical(extra_data);
-		extra_buf.len = static_cast<uint32_t>(len - to_next_page);
-		assert(extra_buf.len <= PAGE_SIZE); // this is only true because the max size for ethernet packets is smaller than the page size. Otherwise, we'd need to support an arbitrary number of extra buffers
-		extra_buf.flags = direction_flag;
-		extra_buf.next = UINT16_MAX;
+		//IOLog("virtio-net addPacketToQueue(): %u of %u segments created, %u bytes\n",
+		//	segment_context.segments_created, segments, segment_context.total_length);
 	}
+	
 	
 	// initialise the network header
 	packet->header.flags = 0;
@@ -1455,7 +1525,7 @@ void eu_philjordan_virtio_net::free()
 		endHandlingInterrupts();
 	}
 	release_obj(work_loop);
-
+	release_obj(packet_memory_cursor);
 	if (this->pci_dev && this->pci_dev->isOpen(this))
 		this->pci_dev->close(this);
 	this->pci_dev = NULL;

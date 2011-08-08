@@ -5,6 +5,7 @@
 #define VIRTIO_NET_H
 
 #include <IOKit/network/IOEthernetController.h>
+#include <IOKit/IOMemoryCursor.h>
 #include "virtio_ring.h"
 
 class IOBufferMemoryDescriptor;
@@ -148,6 +149,10 @@ protected:
 	 * freed in either case (but referenced as a buffer in case of success).
 	 */
 	bool addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx);
+	IOBufferMemoryDescriptor* allocPacketHeaderBuffer();
+	/// Segment output function for the memory cursor, adds a physical memory segment to the buffer descriptor chain
+	static void outputPacketSegment(IOMemoryCursor::PhysicalSegment segment, void* segments, UInt32 segmentIndex);
+
 	void freeDescriptorChain(virtio_net_virtqueue& queue, uint16_t desc_chain_head);
 	bool populateReceiveBuffers();
 
@@ -220,6 +225,8 @@ protected:
 	
 	IOWorkLoop* work_loop;
 	IOFilterInterruptEventSource* intr_event_source;
+	
+	IOMbufMemoryCursor* packet_memory_cursor;
 	
 	/// Set of IOBufferMemoryDescriptor objects to be used as network packet header buffers
 	OSSet* packet_bufdesc_pool;
