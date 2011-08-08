@@ -7,6 +7,15 @@ paravirtual hardware per the "virtio" specification. One type of virtio device
 is the "virtio-net" ethernet adapter. Linux and Windows guest drivers exist for
 it, but as far as I know, this is the first such driver for Mac OS X (10.5+).
 
+In an extremely unscientific benchmark of reading a 570MB file from the host
+(Mac OS X 10.6.8, MacBook Air, VirtualBox 4.1.0) on the guest (Mac OS X 10.6.8)
+via AFP file sharing, the virtio-net
+device with this driver seems to beat the usual emulated Intel Gigabit ethernet
+adapter at 42 seconds (cold cache) or 33 seconds (warm cache) on virtio-net to
+44 seconds (warm cache) on the Intel adapter.
+
+Kernel debugging via gdb is currently not (yet) supported by this driver.
+
 ## Virtio and virtio-net
 
 [*virtio*][virtio] is an open specification for virtualised "hardware" in
@@ -35,57 +44,50 @@ Windows.
 ## Motivation
 
 VirtualBox supports virtual machines running Mac OS X (when running
-on Apple hardware), but so far I have not found any drivers. Virtual machines
-are great for testing and debugging kernel extensions; I've so far been unable
+on Apple hardware), but so far I have not found any virtio drivers. Virtual machines
+are great for testing and debugging kernel extensions; I have so far however been unable
 to connect gdb to a Mac OS X kernel running inside a VirtualBox VM with
 emulated "real" ethernet cards. This is an attempt to create a driver which
 supports kernel debugging for the virtio network interface, in addition to
-being a good choice for general VM networking. Performance is not a priority
-initially but it will be once everything is working.
+being a good choice for general VM networking. Performance has not been a
+priority but seems to be pretty good so far nevertheless.
 
 ## Status
 
 Receiving and transmitting packets works, the adapter is able to negotiate DHCP,
-send and receive pings, handle TCP connections, etc. The virtual machine appears
-somewhat sluggish when it's got data flowing through it, so we're probably
-generating far too many interrupts.
+send and receive pings, handle TCP connections, etc. The driver appears to be
+stable even when saturating the virtual network's bandwidth, although I have not
+performed any systematic or longer term tests.
 
-The driver will attach
-itself to any PCI devices with the virtio device and vendor ID and the network
-subsystem and device class IDs. It will then initialise the device, negotiate its
-supported features and allocate memory for the transmit and receive queues. It
-will also output various diagnostic information including the MAC address to the
-kernel log.
+Startup and shutdown appear to work fine, as do disabling and re-enabling the
+device in Network Preferences and changing the adapter's configuration on the
+host side.
 
-The driver installs an interrupt handler with a filter for ignoring uninteresting
-interrupts. (I assume these happen when another device generates an interrupt on
-the same line) It populates the receive queue with blank network packets. It
-creates an output queue for sending packets. Finally,
-it exposes an ethernet interface to the kernel, which can be enabled by the user,
-at which point packets can be received and sent.
+The driver detects link status changes, but communicating this to the operating
+system does not seem to work correctly.
 
-On unloading, most resources are freed, but unused packets in the receive queue
-and unsent packets in the transmit queue are currently leaked.
+No advanced features offered by the "hardware" are currently supported by the
+driver. This includes checksum offloading, automatic fragmentation and reassembly
+of large packets, MAC address filtering/promiscuous mode, VLAN filtering, etc.
+Support may be added at a later date (patches welcome!).
 
 ## Next Steps
 
-The initialisation code has become quite messy. Most of the things happening in
-`start()`
-and `stop()` should be happening in `enable()` and `disable()`, respectively.
-Some functions are also very long and should be split up. Code documentation
-wouldn't hurt either.
+Since the motivation for writing the driver in the first place was using it for
+kernel debugging, that API must be implemented.
 
-Resource leaks must be fixed, along with any error handling. Currently, some
+We should probably gather network statistics and fix reporting link status
+changes to the system.
+
+Error handling should be double-checked, and correct operation on `disable()` and
+subsequent re-`enable()` should be verified. Correct freeing of all resources
+should also be verified.
+
+Currently, some
 data coming from the device is blindly trusted. This isn't a big deal - if
 we can't trust the VM container, we can't trust anything at all. Still, it would
-be nice to avoid kernel panics on buggy virtio device implementations.
-
-Since the motivation for writing the driver in the first place was using it for
-kernel debugging, that API must be implemented (after tidying up the "normal"
-networking path, so they don't conflict).
-
-We should probably gather network statistics and expose any status changes to
-the system.
+be nice to avoid kernel panics or infinite loops on buggy virtio device
+implementations.
 
 Finally, there are many other optimisation opportunities, some easier to
 implement than others. Some involve using optional device features, which means
@@ -114,8 +116,10 @@ Other types of virtio devices would likewise attach to the `VirtioPCIDriver`.
 
 ## Binaries
 
-I'll provide binary KEXTs once the driver is actually useful. Unless you're a
-developer, there is currently *nothing* useful you can do with this driver.
+I'll provide binary KEXTs once the driver is actually useful for kernel debugging
+(if possible) and development activity has died down enough to sensibly make an
+official release.
+
 Until it's done, you'll need to compile it yourself. This repository contains
 an XCode 4 project with which the KEXT can be built in a single step. The KEXT
 should work on versions 10.5 (Leopard) through 10.7 (Lion), but so far has only
