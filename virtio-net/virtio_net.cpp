@@ -453,84 +453,9 @@ bool eu_philjordan_virtio_net::interruptFilter(OSObject* me, IOFilterInterruptEv
 			OSTestAndSet(0, &virtio_net->received_config_change);
 		}
 		
-		if (virtio_net->debugger_transmit_state == kDebuggerTransmitStateQueued)
-		{
-			// debugger is waiting for packet to send
-			virtio_net_virtqueue& tx_queue = virtio_net->tx_queue;
-			uint16_t used_idx = tx_queue.last_used_idx;
-			while (used_idx != tx_queue.used->idx)
-			{
-				vring_used_elem& used = tx_queue.used->ring[used_idx % tx_queue.num];
-				uint16_t desc = used.id;
-				if (desc < tx_queue.num && tx_queue.packets_for_descs[desc] == virtio_net->debugger_transmit_packet)
-				{
-					kprintf("virtio-net interruptFilter(): Found debugger send packet in tx used queue at index %u, updating debugger state.\n", used_idx);
-					tx_queue.packets_for_descs[desc] = NULL;
-					if (!OSCompareAndSwap(kDebuggerTransmitStateQueued, kDebuggerTransmitStateCompleted, &virtio_net->debugger_transmit_state))
-					{
-						kprintf("virtio-net interruptFilter(): Apparently already beaten to it by sendPacket()?\n");
-					}
-					else
-					{
-						virtio_net->freeDescriptorChain(tx_queue, desc);
-					}
-					used.id = UINT16_MAX;
-					used.len = 0;
-					break;
-				}
-				++used_idx;
-				OSSynchronizeIO();
-			}
-			if (virtio_net->debugger_receive_state == kDebuggerReceiveStateWaiting)
-				goto dbg_receive;
-		}
-		else if (virtio_net->debugger_receive_state == kDebuggerReceiveStateWaiting)
-		{
-dbg_receive:
-			// debugger is waiting for packet to be received
-			virtio_net_virtqueue& rx_queue = virtio_net->rx_queue;
-			
-			for (uint16_t used_idx = rx_queue.last_used_idx; used_idx != rx_queue.used->idx; ++used_idx)
-			{
-				vring_used_elem& used = rx_queue.used->ring[used_idx % rx_queue.num];
-				uint16_t desc = used.id;
-				if (desc == UINT16_MAX || desc > rx_queue.num || used.len < sizeof(virtio_net_hdr))
-					continue;
-				
-				virtio_net_packet* packet = rx_queue.packets_for_descs[desc];
-				if (!packet)
-					continue;
-					
-				kprintf("virtio-net interruptFilter(): A packet has been received for the waiting debugger.\n");
-				if (OSCompareAndSwap(kDebuggerReceiveStateWaiting, kDebuggerReceiveStateCopying, &virtio_net->debugger_receive_state))
-				{
-					uint32_t len = *virtio_net->debugger_receive_packet_length = used.len - sizeof(virtio_net_hdr);
-					kprintf("virtio-net interruptFilter(): Copying received debugger packet (length %u).\n", len);
-					memcpy(virtio_net->debugger_receive_packet_mem, mbuf_data(packet->mbuf), len);
-					used.id = UINT16_MAX;
-					used.len = 0;
-					if (OSCompareAndSwap(kDebuggerReceiveStateCopying, kDebuggerReceiveStateCompleted, &virtio_net->debugger_receive_state))
-						kprintf("virtio-net interruptFilter(): Notified debugger of received packet.\n", virtio_net->debugger_receive_state);
-					else
-						kprintf("virtio-net interruptFilter(): Error! Incorrect state %lu.\n", virtio_net->debugger_receive_state);
-
-					// immediately re-queue into available ring
-					uint16_t avail_idx = rx_queue.avail->idx;
-					rx_queue.avail->ring[avail_idx % rx_queue.num] = desc;
-					++avail_idx;
-					virtio_net->notifyQueueAvailIdx(rx_queue, avail_idx);
-					
-					break;
-				}
-			}
-		}
-		else
-		{
-			// normal operation
-			// disable further interrupts until the handler has run
-			virtio_net->rx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
-			virtio_net->tx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
-		}
+		// disable further interrupts until the handler has run
+		virtio_net->rx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
+		virtio_net->tx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
 		return true;
 	}
 	return false;
@@ -1292,17 +1217,11 @@ UInt32 eu_philjordan_virtio_net::outputPacket(mbuf_t buffer, void *param)
 	
 void eu_philjordan_virtio_net::receivePacket(void *pkt, UInt32 *pktSize, UInt32 timeout)
 {
+	// note: timeout seems to be 3ms in OSX 10.6.8
 	uint64_t timeout_us = timeout * 1000ull;
 	uint64_t waited = 0;
 	
 	//kprintf("virtio-net receivePacket(): Willing to wait %lu ms\n", timeout);
-	debugger_receive_packet_mem = pkt;
-	debugger_receive_packet_length = pktSize;
-
-	// clear the "no interrupt" bit in the receive queue
-	#warning TODO: This is only correct for little endian
-	bool enabled_interrupt = OSTestAndClear(0, (UInt8*)&rx_queue.avail->flags);
-	OSSynchronizeIO();
 
 	while (true)
 	{
@@ -1335,7 +1254,7 @@ void eu_philjordan_virtio_net::receivePacket(void *pkt, UInt32 *pktSize, UInt32 
 			rx_queue.avail->ring[avail_idx % rx_queue.num] = desc;
 			++avail_idx;
 			notifyQueueAvailIdx(rx_queue, avail_idx);
-			goto done;
+			return;
 		}
 		
 		if (waited >= timeout_us)
@@ -1344,43 +1263,9 @@ void eu_philjordan_virtio_net::receivePacket(void *pkt, UInt32 *pktSize, UInt32 
 			break;
 		}
 		
-		if (OSCompareAndSwap(kDebuggerReceiveStateIdle, kDebuggerReceiveStateWaiting, &debugger_receive_state))
-		{
-			IODelay(20);
-			
-			if (!OSCompareAndSwap(kDebuggerReceiveStateWaiting, kDebuggerReceiveStateIdle, &debugger_receive_state))
-			{
-				kprintf("virtio-net receivePacket(): Receiving packet via interrupt handler...\n");
-				while (!OSCompareAndSwap(kDebuggerReceiveStateCompleted, kDebuggerReceiveStateIdle, &debugger_receive_state))
-				{
-					IODelay(20);
-					waited += 20;
-					if (waited % 10000000 == 0)
-						kprintf("virtio-net receivePacket(): Still waiting for packet from interrupt handler... (state: %lu)\n", debugger_receive_state);
-				}
-				kprintf("virtio-net receivePacket(): Got packet with %lu bytes.\n", *pktSize);
-				goto done;
-			}
-		}
-		else
-		{
-			kprintf("virtio-net receivePacket(): State error (%lu)!\n", debugger_receive_state);
-			IODelay(20);
-		}
+		IODelay(20);
 		waited += 20;
 	}
-
-done:
-	if (enabled_interrupt)
-	{
-		// disable interrupt again
-		#warning LE only!
-		OSTestAndSet(0, (UInt8*)&rx_queue.avail->flags);
-	}
-
-	//kprintf("virtio-net receivePacket(): done\n");
-	debugger_receive_packet_mem = NULL;
-	debugger_receive_packet_length = NULL;
 }
 
 static void vring_push_free_desc(virtio_net_virtqueue& queue, uint16_t free_idx);
@@ -1409,17 +1294,8 @@ void eu_philjordan_virtio_net::sendPacket(void *pkt, UInt32 pktSize)
 		return;
 	}
 	
-	if (!OSCompareAndSwap(kDebuggerTransmitStateIdle, kDebuggerTransmitStateQueued, &debugger_transmit_state))
-	{
-		kprintf("virtio-net sendPacket(): State error (%lu), aborting.\n", debugger_transmit_state);
-		return;
-	}
 	virtio_net_packet* packet = debugger_transmit_packet;
 	memcpy(mbuf_data(packet->mbuf), pkt, pktSize);
-	// clear the "no interrupt" bit in the transmit queue
-	#warning TODO: This is only correct for little endian
-	bool enabled_interrupt = OSTestAndClear(0, (UInt8*)&tx_queue.avail->flags);
-	OSSynchronizeIO();
 
 	packet->header.flags = 0;
 	packet->header.gso_type = VIRTIO_NET_HDR_GSO_NONE;
@@ -1447,8 +1323,7 @@ void eu_philjordan_virtio_net::sendPacket(void *pkt, UInt32 pktSize)
 	tx_queue.avail->idx = ++avail_idx;
 	notifyQueueAvailIdx(tx_queue, avail_idx);
 	
-	unsigned spin_count = 0;
-	while (!OSCompareAndSwap(kDebuggerTransmitStateCompleted, kDebuggerTransmitStateIdle, &debugger_transmit_state))
+	while (true)
 	{
 		// this means no other thread/interrupt has detected the packet as sent, so let's keep polling it ourselves
 		if (last_used_idx != tx_queue.used->idx)
@@ -1461,22 +1336,16 @@ void eu_philjordan_virtio_net::sendPacket(void *pkt, UInt32 pktSize)
 				used.len = 0;
 				//kprintf("virtio-net sendPacket(): Debugger packet was found in used tx ring at index %u, finishing up.\n", last_used_idx);
 				freeDescriptorChain(tx_queue, head_desc);
-				OSCompareAndSwap(kDebuggerTransmitStateQueued, kDebuggerTransmitStateIdle, &debugger_transmit_state);
 				break;
 			}
 		}
 		IODelay(20);
 		OSSynchronizeIO();
-		++spin_count;
 	}
 	
-	if (enabled_interrupt)
-	{
-		// disable interrupt again
-		#warning LE only!
-		OSTestAndSet(0, (UInt8*)&tx_queue.avail->flags);
-	}
 	//kprintf("virtio-net sendPacket(): done, disposing of any other packets in the queue.\n");
+	// not 100% sure this is safe - it calls freePacket() which may be a problem? 
+#warning TODO: Instead of calling freePacket, put all the packets in a linked list which is freed when the debugger ends
 	releaseSentPackets(true);
 }
 
@@ -1728,22 +1597,16 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 		{
 			if (packet == debugger_transmit_packet)
 			{
-				// this packet was queued with the debugging API, don't free it, but notify the debugger if necessary
+				// this packet was queued with the debugging API - this is weird
 				tx_queue.packets_for_descs[used_desc] = NULL;
-				if(OSCompareAndSwap(kDebuggerTransmitStateQueued, kDebuggerTransmitStateCompleted, &debugger_transmit_state))
-				{
-					kprintf("virtio-net: releaseSentPackets(): detected KDP transmit packet and notified debugger.\n");
-					freeDescriptorChain(tx_queue, used_desc);
-				}
-				else
-				{
-					kprintf("virtio-net: releaseSentPackets(): detected KDP transmit packet but debugger had already been notified.\n");
-				}
+				kprintf("virtio-net: releaseSentPackets(): detected KDP transmit packet, this should normally not happen (debugger%s active).\n", from_debugger ? "" : " not");
+				freeDescriptorChain(tx_queue, used_desc);
 				++tx_queue.last_used_idx;
 				continue;
 			}
 			else if (packet->mbuf)
 			{
+#warning TODO: in the debugger, just put all packets to free in a linked list
 				freePacket(packet->mbuf);
 			}
 			else

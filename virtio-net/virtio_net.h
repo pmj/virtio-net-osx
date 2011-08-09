@@ -263,34 +263,6 @@ protected:
 	IOKernelDebugger* debugger;
 	/// A packet and associated mbuf reserved for transmitting packets supplied by the debugger
 	virtio_net_packet* debugger_transmit_packet;
-	
-	volatile UInt32 debugger_transmit_state;
-	volatile UInt32 debugger_receive_state;
-	
-	// Will be filled by receivePacket() if receive state isn't idle
-	UInt32* debugger_receive_packet_length;
-	void* debugger_receive_packet_mem;
-	
-	enum DebuggerTransmitState
-	{
-		// The debugger isn't sending anything
-		kDebuggerTransmitStateIdle,
-		// The debugger is about to queue or has queued the packet
-		kDebuggerTransmitStateQueued,
-		// The interrupt handler has detected the packet and it is known to have been sent. The debugger must reset back to idle.
-		kDebuggerTransmitStateCompleted
-	};
-	enum DebuggerReceiveState
-	{
-		// The debugger isn't expecting to receive anything
-		kDebuggerReceiveStateIdle,
-		// The debugger is ready to accept one packet
-		kDebuggerReceiveStateWaiting,
-		// The debugger is ready to accept one packet and the interrupt handler has started filling it with data
-		kDebuggerReceiveStateCopying,
-		// The debugger is ready to accept one packet and the interrupt handler has filled it with data, the debugger should reset back to idle
-		kDebuggerReceiveStateCompleted
-	};
 };
 
 #endif
