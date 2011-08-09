@@ -14,7 +14,12 @@ device with this driver seems to beat the usual emulated Intel Gigabit ethernet
 adapter at 42 seconds (cold cache) or 33 seconds (warm cache) on virtio-net to
 44 seconds (warm cache) on the Intel adapter.
 
-Kernel debugging via gdb is currently not (yet) supported by this driver.
+Kernel debugging via gdb is now also supported by this driver. If the virtio-net
+device is the primary network adapter in the system (and the driver is the first
+network card driver to be loaded), you can attach gdb to an appropriately
+configured crashed kernel. Sending the ACPI Shutdown signal in VirtualBox is
+treated as a non-maskable interrupt (NMI) so if you specify that kernel debug
+flag as part of the boot args, you can attach the debugger that way.
 
 ## Virtio and virtio-net
 
@@ -73,9 +78,6 @@ Support may be added at a later date (patches welcome!).
 
 ## Next Steps
 
-Since the motivation for writing the driver in the first place was using it for
-kernel debugging, that API must be implemented.
-
 We should probably gather network statistics and fix reporting link status
 changes to the system.
 
@@ -116,11 +118,10 @@ Other types of virtio devices would likewise attach to the `VirtioPCIDriver`.
 
 ## Binaries
 
-I'll provide binary KEXTs once the driver is actually useful for kernel debugging
-(if possible) and development activity has died down enough to sensibly make an
-official release.
+I will make an official 1.0 release of the driver after some more tests and will
+release binaries then.
 
-Until it's done, you'll need to compile it yourself. This repository contains
+Until then, you'll need to compile it yourself. This repository contains
 an XCode 4 project with which the KEXT can be built in a single step. The KEXT
 should work on versions 10.5 (Leopard) through 10.7 (Lion), but so far has only
 been tested on Snow Leopard. Since XCode 4 only runs on Snow Leopard and up,
