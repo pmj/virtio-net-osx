@@ -6,6 +6,7 @@
 
 #include <IOKit/network/IOEthernetController.h>
 #include <IOKit/IOMemoryCursor.h>
+#include <IOKit/IOCommandGate.h>
 #include "virtio_ring.h"
 
 class IOBufferMemoryDescriptor;
@@ -73,12 +74,37 @@ public:
 	virtual UInt32 outputPacket(mbuf_t, void *param);
 	
 	// polled-mode versions for kernel debugger
+	virtual IOReturn enable(IOKernelDebugger *debugger);
+	virtual IOReturn disable(IOKernelDebugger *debugger);
 	virtual void receivePacket(void *pkt, UInt32 *pktSize, UInt32 timeout);
 	virtual void sendPacket(void *pkt, UInt32 pktSize);
 
 	virtual bool configureInterface(IONetworkInterface *netif);
 	virtual IOReturn getPacketFilters(const OSSymbol *group, UInt32 *filters) const;
 protected:
+	/// Enable the device far enough to do debugging
+	/** Initialises with no output queue, no interrupts - that is done by the
+	 * interface version of enable().
+	 */
+	bool enablePartial();
+	/// Revert enablePartial
+	void disablePartial();
+
+	template <typename P, IOReturn(eu_philjordan_virtio_net::*fn)(P* p)> static IOReturn runMemberInCommandGateAction(OSObject* owner, void* param, void*, void*, void*)
+	{
+		eu_philjordan_virtio_net* array = OSDynamicCast(eu_philjordan_virtio_net, owner);
+		assert(array);
+		return (array->*fn)(static_cast<P*>(param));
+	}
+	template <typename P, IOReturn(eu_philjordan_virtio_net::*fn)(P* p)> IOReturn runInCommandGate(P* p)
+	{
+		return getCommandGate()->runAction(runMemberInCommandGateAction<P, fn>, static_cast<void*>(p));
+	}
+
+	IOReturn gatedEnableInterface(IONetworkInterface* interface);
+	IOReturn gatedEnableDebugger(IOKernelDebugger* debugger);
+
+	
 	enum DriverState
 	{
 		// Error states:
@@ -95,8 +121,10 @@ protected:
 		kDriverStateStarted,
 		/// enable() has been called, and succeeded
 		kDriverStateEnabled,
-		/// enable() has been called with a debugging client, and succeeded
+		/// enable() has been called with (only) a debugging client, and succeeded
 		kDriverStateEnabledDebugging,
+		/// enable() has been called for both a normal interface client and the debugger and succeeded
+		kDriverStateEnabledBoth,
 		/// stop() was called
 		kDriverStateStopped
 		
@@ -186,7 +214,7 @@ protected:
 	void handleReceivedPackets();
 	
 	/// Frees any packets marked as "used" in the transmit queue and frees their descriptors
-	void releaseSentPackets();
+	void releaseSentPackets(bool from_debugger = false);
 	
 	DriverState driver_state;
 	
@@ -230,6 +258,39 @@ protected:
 	
 	/// Set of IOBufferMemoryDescriptor objects to be used as network packet header buffers
 	OSSet* packet_bufdesc_pool;
+	
+	/// The client object for the debugger
+	IOKernelDebugger* debugger;
+	/// A packet and associated mbuf reserved for transmitting packets supplied by the debugger
+	virtio_net_packet* debugger_transmit_packet;
+	
+	volatile UInt32 debugger_transmit_state;
+	volatile UInt32 debugger_receive_state;
+	
+	// Will be filled by receivePacket() if receive state isn't idle
+	UInt32* debugger_receive_packet_length;
+	void* debugger_receive_packet_mem;
+	
+	enum DebuggerTransmitState
+	{
+		// The debugger isn't sending anything
+		kDebuggerTransmitStateIdle,
+		// The debugger is about to queue or has queued the packet
+		kDebuggerTransmitStateQueued,
+		// The interrupt handler has detected the packet and it is known to have been sent. The debugger must reset back to idle.
+		kDebuggerTransmitStateCompleted
+	};
+	enum DebuggerReceiveState
+	{
+		// The debugger isn't expecting to receive anything
+		kDebuggerReceiveStateIdle,
+		// The debugger is ready to accept one packet
+		kDebuggerReceiveStateWaiting,
+		// The debugger is ready to accept one packet and the interrupt handler has started filling it with data
+		kDebuggerReceiveStateCopying,
+		// The debugger is ready to accept one packet and the interrupt handler has filled it with data, the debugger should reset back to idle
+		kDebuggerReceiveStateCompleted
+	};
 };
 
 #endif

@@ -452,9 +452,85 @@ bool eu_philjordan_virtio_net::interruptFilter(OSObject* me, IOFilterInterruptEv
 		{
 			OSTestAndSet(0, &virtio_net->received_config_change);
 		}
-		// disable further interrupts until the handler has run
-		virtio_net->rx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
-		virtio_net->tx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
+		
+		if (virtio_net->debugger_transmit_state == kDebuggerTransmitStateQueued)
+		{
+			// debugger is waiting for packet to send
+			virtio_net_virtqueue& tx_queue = virtio_net->tx_queue;
+			uint16_t used_idx = tx_queue.last_used_idx;
+			while (used_idx != tx_queue.used->idx)
+			{
+				vring_used_elem& used = tx_queue.used->ring[used_idx % tx_queue.num];
+				uint16_t desc = used.id;
+				if (desc < tx_queue.num && tx_queue.packets_for_descs[desc] == virtio_net->debugger_transmit_packet)
+				{
+					kprintf("virtio-net interruptFilter(): Found debugger send packet in tx used queue at index %u, updating debugger state.\n", used_idx);
+					tx_queue.packets_for_descs[desc] = NULL;
+					if (!OSCompareAndSwap(kDebuggerTransmitStateQueued, kDebuggerTransmitStateCompleted, &virtio_net->debugger_transmit_state))
+					{
+						kprintf("virtio-net interruptFilter(): Apparently already beaten to it by sendPacket()?\n");
+					}
+					else
+					{
+						virtio_net->freeDescriptorChain(tx_queue, desc);
+					}
+					used.id = UINT16_MAX;
+					used.len = 0;
+					break;
+				}
+				++used_idx;
+				OSSynchronizeIO();
+			}
+			if (virtio_net->debugger_receive_state == kDebuggerReceiveStateWaiting)
+				goto dbg_receive;
+		}
+		else if (virtio_net->debugger_receive_state == kDebuggerReceiveStateWaiting)
+		{
+dbg_receive:
+			// debugger is waiting for packet to be received
+			virtio_net_virtqueue& rx_queue = virtio_net->rx_queue;
+			
+			for (uint16_t used_idx = rx_queue.last_used_idx; used_idx != rx_queue.used->idx; ++used_idx)
+			{
+				vring_used_elem& used = rx_queue.used->ring[used_idx % rx_queue.num];
+				uint16_t desc = used.id;
+				if (desc == UINT16_MAX || desc > rx_queue.num || used.len < sizeof(virtio_net_hdr))
+					continue;
+				
+				virtio_net_packet* packet = rx_queue.packets_for_descs[desc];
+				if (!packet)
+					continue;
+					
+				kprintf("virtio-net interruptFilter(): A packet has been received for the waiting debugger.\n");
+				if (OSCompareAndSwap(kDebuggerReceiveStateWaiting, kDebuggerReceiveStateCopying, &virtio_net->debugger_receive_state))
+				{
+					uint32_t len = *virtio_net->debugger_receive_packet_length = used.len - sizeof(virtio_net_hdr);
+					kprintf("virtio-net interruptFilter(): Copying received debugger packet (length %u).\n", len);
+					memcpy(virtio_net->debugger_receive_packet_mem, mbuf_data(packet->mbuf), len);
+					used.id = UINT16_MAX;
+					used.len = 0;
+					if (OSCompareAndSwap(kDebuggerReceiveStateCopying, kDebuggerReceiveStateCompleted, &virtio_net->debugger_receive_state))
+						kprintf("virtio-net interruptFilter(): Notified debugger of received packet.\n", virtio_net->debugger_receive_state);
+					else
+						kprintf("virtio-net interruptFilter(): Error! Incorrect state %lu.\n", virtio_net->debugger_receive_state);
+
+					// immediately re-queue into available ring
+					uint16_t avail_idx = rx_queue.avail->idx;
+					rx_queue.avail->ring[avail_idx % rx_queue.num] = desc;
+					++avail_idx;
+					virtio_net->notifyQueueAvailIdx(rx_queue, avail_idx);
+					
+					break;
+				}
+			}
+		}
+		else
+		{
+			// normal operation
+			// disable further interrupts until the handler has run
+			virtio_net->rx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
+			virtio_net->tx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
+		}
 		return true;
 	}
 	return false;
@@ -702,10 +778,36 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 			interface, interface ? interface->getMetaClass()->getClassName() : "null");
 		return false;
 	}
+	driver_state = kDriverStateStarted;
+
 	interface->registerService();
 	PJLogVerbose("virtio-net start(): interface registered.\n");
 	
-	driver_state = kDriverStateStarted;
+	// now try to set up the debugger
+	// allocate a reserved packet for transmission so we don't have to allocate in sendPacket()
+	mbuf_t packet_mbuf = allocatePacket(kIOEthernetMaxPacketSize);
+	IOBufferMemoryDescriptor* packet_mem = packet_mbuf ? allocPacketHeaderBuffer() : NULL;
+	if (packet_mem)
+	{
+		debugger_transmit_packet = static_cast<virtio_net_packet*>(packet_mem->getBytesNoCopy());
+		debugger_transmit_packet->mbuf = packet_mbuf;
+		debugger_transmit_packet->mem = packet_mem;
+	}
+	else if (packet_mbuf)
+	{
+		freePacket(packet_mbuf);
+		packet_mbuf = NULL;
+	}
+	// if that worked, try to attach the debugger
+	if (!debugger_transmit_packet || !attachDebuggerClient(&debugger))
+	{
+		IOLog("virtio-net start(): Warning! Failed to instantiate %s. Continuing anyway, but debugger will be unavailable.\n",
+			debugger_transmit_packet ? "debugger client" : "transmission packet reserved for debugger");
+	}
+	else
+	{
+		IOLog("virtio-net start(): Debug client attached successfully.\n");
+	}
 	return true;
 }
 
@@ -858,9 +960,10 @@ bool eu_philjordan_virtio_net::setupVirtqueue(
 		return false;
 	}
 	memset(queue_buffer->getBytesNoCopy(), 0, queue_size_bytes);
-	configWriteLE32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, queue_buffer->getPhysicalAddress() >> 12u);
 				
 	virtqueue_init(queue, queue_buffer, queue_size, queue_id);
+
+	configWriteLE32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, queue_buffer->getPhysicalAddress() >> 12u);
 	
 	return true;
 }
@@ -869,7 +972,10 @@ void virtqueue_init(virtio_net_virtqueue& queue, IOBufferMemoryDescriptor* buf, 
 	queue.index = queue_id;
 	queue.buf = buf;
 	vring_init(&queue, queue_size, buf->getBytesNoCopy(), VIRTIO_PAGE_SIZE);
-	
+
+	// disable interrupts to begin with
+	queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
+
 	queue.packets_for_descs = PJZMallocArray<virtio_net_packet*>(queue_size);
 	queue.num_free_desc = queue_size;
 	queue.free_desc_head = 0;
@@ -903,35 +1009,56 @@ IOOutputQueue* eu_philjordan_virtio_net::createOutputQueue()
 	return queue;
 }
 
-IOReturn eu_philjordan_virtio_net::enable(IONetworkInterface* interface)
+IOReturn eu_philjordan_virtio_net::enable(IOKernelDebugger *debugger)
 {
-	PJLogVerbose("virtio-net enable()\n");
-	if (driver_state != kDriverStateStarted)
+	return runInCommandGate<IOKernelDebugger, &eu_philjordan_virtio_net::gatedEnableDebugger>(debugger);
+}
+
+IOReturn eu_philjordan_virtio_net::gatedEnableDebugger(IOKernelDebugger* debugger)
+{
+	if (!this->debugger || !this->debugger_transmit_packet)
+		return kIOReturnError;
+	if (driver_state == kDriverStateEnabled)
 	{
-		IOLog("virtio-net enable(): Bad driver state %d (expected %d), aborting.\n", driver_state, kDriverStateStarted);
-		return kIOReturnInvalid;
+		// already fully up and running anyway
+		driver_state = kDriverStateEnabledBoth;
+		IOLog("virtio-net enable(): already enabled for normal interface clients, now also enabled for debugger client.\n");
+		return kIOReturnSuccess;
 	}
-	driver_state = kDriverStateEnableFailed;
-	if (interface != this->interface)
+	else if (driver_state == kDriverStateEnabledBoth || driver_state == kDriverStateEnabledDebugging)
 	{
-		IOLog("virtio-net enable(): unknown interface %p (expected %p)\n", interface, this->interface);
-		return kIOReturnBadArgument;
+		IOLog("virtio-net enable(): already enabled for debugging, enable() called a second time.\n");
+		return kIOReturnSuccess;
 	}
 	
+	if (driver_state != kDriverStateStarted)
+	{
+		IOLog("virtio-net enable(): Invalid state (%d) for enabling debugger.\n", driver_state);
+		return kIOReturnInvalid;
+	}
+	
+	bool ok = enablePartial();
+	IOLog("virtio-net enable(): Starting debugger %s.\n", ok ? "succeeded" : "failed");
+	driver_state = ok ? kDriverStateEnabledDebugging : kDriverStateEnableFailed;
+	return ok ? kIOReturnSuccess : kIOReturnError;
+}
+
+bool eu_philjordan_virtio_net::enablePartial()
+{
 	if (!pci_dev->open(this))
 	{
 		IOLog("virtio-net enable(): Opening PCI device failed.\n");
-		return kIOReturnError;
+		return false;
 	}
 	if (!mapVirtioConfigurationSpace())
-		return kIOReturnError;
+		return false;
 
 	// Re-initialise the device
 	uint32_t dev_features = virtioResetInitAndReadFeatureBits();
 
 	// Initialise the receive and transmit virtqueues
 	if (!setupVirtqueue(0, rx_queue))
-		return failDevice(), kIOReturnError;
+		return failDevice(), false;
 	PJLogVerbose("virtio-net enable(): Initialised virtqueue 0 (receive queue) with " PRIuPTR " bytes (%u entries) at " PRIXPTR "\n",
 		rx_queue.buf->getLength(), rx_queue.num, rx_queue.buf->getPhysicalAddress());
 
@@ -952,7 +1079,7 @@ IOReturn eu_philjordan_virtio_net::enable(IONetworkInterface* interface)
 	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_DRIVER_OK);
 	PJLogVerbose("virtio-net enable(): Device set to 'driver ok' state.\n");
 
-	// The virtqueues can now be used, and interrupts will begin firing
+	// The virtqueues can now be used
 	
 	// fill receive queue with as many empty packets as possible
 	if (!populateReceiveBuffers())
@@ -969,6 +1096,49 @@ IOReturn eu_philjordan_virtio_net::enable(IONetworkInterface* interface)
 	}
 	PJLogVerbose("virtio-net enable(): Populated receive buffers: %u free descriptors left, avail idx %u\n",
 		rx_queue.num_free_desc, rx_queue.avail->idx);
+
+	// start handling interrupts now that the internal data structures are set up
+	if (!beginHandlingInterrupts())
+		return failDevice(), false;
+	return true;
+}
+
+IOReturn eu_philjordan_virtio_net::enable(IONetworkInterface* interface)
+{
+	return runInCommandGate<IONetworkInterface, &eu_philjordan_virtio_net::gatedEnableInterface>(interface);
+}
+
+IOReturn eu_philjordan_virtio_net::gatedEnableInterface(IONetworkInterface* interface)
+{
+	PJLogVerbose("virtio-net enable()\n");
+	if (driver_state == kDriverStateEnabledBoth || driver_state == kDriverStateEnabled)
+		return kIOReturnSuccess;
+	if (driver_state != kDriverStateStarted && driver_state != kDriverStateEnabledDebugging)
+	{
+		IOLog("virtio-net enable(): Bad driver state %d (expected %d or %d), aborting.\n", driver_state, kDriverStateStarted, kDriverStateEnabledDebugging);
+		return kIOReturnInvalid;
+	}
+	if (driver_state != kDriverStateEnabledDebugging)
+		driver_state = kDriverStateEnableFailed;
+	if (interface != this->interface)
+	{
+		IOLog("virtio-net enable(): unknown interface %p (expected %p)\n", interface, this->interface);
+		return kIOReturnBadArgument;
+	}
+	
+	if (driver_state != kDriverStateEnabledDebugging && !enablePartial())
+	{
+		driver_state = kDriverStateEnableFailed;
+		IOLog("virtio-net enable(): Basic device initialisation failed.\n");
+		return kIOReturnError;
+	}
+	driver_state = kDriverStateEnableFailed;
+
+	// enable interrupts on the appropriate queues
+	rx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
+	if (!feature_notify_on_empty)
+		tx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
+	OSSynchronizeIO();
 	
 	// enable the output queue
 	IOOutputQueue* output_queue = getOutputQueue();
@@ -980,10 +1150,6 @@ IOReturn eu_philjordan_virtio_net::enable(IONetworkInterface* interface)
 	
 	driver_state = kDriverStateEnabled;
 
-	// start handling interrupts now that the internal data structures are set up
-	if (!beginHandlingInterrupts())
-		return failDevice(), kIOReturnError;
-
 	return kIOReturnSuccess;
 }
 
@@ -994,7 +1160,7 @@ void eu_philjordan_virtio_net::clearVirtqueuePackets(virtio_net_virtqueue& queue
 	for (uint16_t i = 0; i < queue.num; ++i)
 	{
 		virtio_net_packet* packet = queue.packets_for_descs[i];
-		if (!packet)
+		if (!packet || packet == debugger_transmit_packet)
 			continue;
 
 		if (packet->mbuf)
@@ -1005,21 +1171,39 @@ void eu_philjordan_virtio_net::clearVirtqueuePackets(virtio_net_virtqueue& queue
 	}
 }
 
+IOReturn eu_philjordan_virtio_net::disable(IOKernelDebugger *debugger)
+{
+	IOLog("virtio-net disable(): Disabling debugger.\n");
+	if (driver_state != kDriverStateEnabledDebugging && driver_state != kDriverStateEnabledBoth)
+	{
+		IOLog("virtio-net disable(): Bad driver state %d, aborting.\n", driver_state);
+		return kIOReturnInvalid;
+	}
+	
+	if (driver_state == kDriverStateEnabledDebugging)
+	{
+		disablePartial();
+		driver_state = kDriverStateStarted;
+		IOLog("virtio-net disable(): Disabled device altogether.\n");
+	}
+	else
+	{
+		driver_state = kDriverStateEnabled;
+		IOLog("virtio-net disable(): Disabled debugger, interface client still active.\n");
+	}
+	return kIOReturnSuccess;
+}
+
 IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 {
 	IOLog("virtio-net disable()\n");
-	if (driver_state != kDriverStateEnabled)
+	if (driver_state != kDriverStateEnabled && driver_state != kDriverStateEnabledBoth)
 	{
 		IOLog("virtio-net disable(): Bad driver state %d (expected %d), aborting.\n", driver_state, kDriverStateEnabled);
 		return kIOReturnInvalid;
 	}
 	
-	// disable the device to stop any more interrupts from occurring
-	virtioResetDevice();
-	// unmap and close device
-	release_obj(this->pci_config_mmap);
-	pci_dev->close(this);
-
+	// disable the output queue
 	IOOutputQueue* output_queue = getOutputQueue();
 	if (output_queue)
 	{
@@ -1027,6 +1211,34 @@ IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 		output_queue->setCapacity(0);
 		output_queue->flush();
 	}
+	
+	// disable interrupts again
+	rx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
+	if (!feature_notify_on_empty)
+		tx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
+
+	if (driver_state == kDriverStateEnabledBoth)
+	{
+		driver_state = kDriverStateEnabledDebugging;
+		IOLog("virtio-net disable(): Transitioned to debugger-only state.\n");
+	}
+	else
+	{
+		disablePartial();
+		driver_state = kDriverStateStarted;
+	}
+	
+	return kIOReturnSuccess;
+}
+
+void eu_philjordan_virtio_net::disablePartial()
+{
+	// disable the device to stop any more interrupts from occurring
+	virtioResetDevice();
+	// unmap and close device
+	release_obj(this->pci_config_mmap);
+	pci_dev->close(this);
+
 	endHandlingInterrupts();
 
 	handleReceivedPackets();
@@ -1044,8 +1256,8 @@ IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 	virtqueue_free(tx_queue);
 	
 	driver_state = kDriverStateStarted;
-	return kIOReturnSuccess;
 }
+
 
 UInt32 eu_philjordan_virtio_net::outputPacket(mbuf_t buffer, void *param)
 {
@@ -1080,12 +1292,192 @@ UInt32 eu_philjordan_virtio_net::outputPacket(mbuf_t buffer, void *param)
 	
 void eu_philjordan_virtio_net::receivePacket(void *pkt, UInt32 *pktSize, UInt32 timeout)
 {
-	#warning TODO
+	uint64_t timeout_us = timeout * 1000ull;
+	uint64_t waited = 0;
+	
+	//kprintf("virtio-net receivePacket(): Willing to wait %lu ms\n", timeout);
+	debugger_receive_packet_mem = pkt;
+	debugger_receive_packet_length = pktSize;
+
+	// clear the "no interrupt" bit in the receive queue
+	#warning TODO: This is only correct for little endian
+	bool enabled_interrupt = OSTestAndClear(0, (UInt8*)&rx_queue.avail->flags);
+	OSSynchronizeIO();
+
+	while (true)
+	{
+		// check for packets in the rx queue
+		uint16_t last_used = rx_queue.last_used_idx;
+		for (uint16_t used_idx = last_used; used_idx != rx_queue.used->idx; ++used_idx)
+		{
+			vring_used_elem& used = rx_queue.used->ring[used_idx % rx_queue.num];
+			uint16_t desc = used.id;
+			if (desc == UINT16_MAX || desc >= rx_queue.num || used.len < sizeof(virtio_net_hdr))
+				continue;
+			
+			virtio_net_packet* packet = rx_queue.packets_for_descs[desc];
+			if (!packet)
+			{
+				kprintf("virtio-net receivePacket(): Warning! No packet for descriptor %u, skipping.\n", desc);
+				continue;
+			}
+			
+			rx_queue.last_used_idx = used_idx + 1;
+			
+			uint32_t len = *pktSize = used.len - sizeof(virtio_net_hdr);
+			//kprintf("virtio-net receivePacket(): Copying received debugger packet (length %u).\n", len);
+			memcpy(pkt, mbuf_data(packet->mbuf), len);
+			used.id = UINT16_MAX;
+			used.len = 0;
+
+			// immediately re-queue into available ring
+			uint16_t avail_idx = rx_queue.avail->idx;
+			rx_queue.avail->ring[avail_idx % rx_queue.num] = desc;
+			++avail_idx;
+			notifyQueueAvailIdx(rx_queue, avail_idx);
+			goto done;
+		}
+		
+		if (waited >= timeout_us)
+		{
+			//kprintf("virtio-net receivePacket(): out of time\n");
+			break;
+		}
+		
+		if (OSCompareAndSwap(kDebuggerReceiveStateIdle, kDebuggerReceiveStateWaiting, &debugger_receive_state))
+		{
+			IODelay(20);
+			
+			if (!OSCompareAndSwap(kDebuggerReceiveStateWaiting, kDebuggerReceiveStateIdle, &debugger_receive_state))
+			{
+				kprintf("virtio-net receivePacket(): Receiving packet via interrupt handler...\n");
+				while (!OSCompareAndSwap(kDebuggerReceiveStateCompleted, kDebuggerReceiveStateIdle, &debugger_receive_state))
+				{
+					IODelay(20);
+					waited += 20;
+					if (waited % 10000000 == 0)
+						kprintf("virtio-net receivePacket(): Still waiting for packet from interrupt handler... (state: %lu)\n", debugger_receive_state);
+				}
+				kprintf("virtio-net receivePacket(): Got packet with %lu bytes.\n", *pktSize);
+				goto done;
+			}
+		}
+		else
+		{
+			kprintf("virtio-net receivePacket(): State error (%lu)!\n", debugger_receive_state);
+			IODelay(20);
+		}
+		waited += 20;
+	}
+
+done:
+	if (enabled_interrupt)
+	{
+		// disable interrupt again
+		#warning LE only!
+		OSTestAndSet(0, (UInt8*)&rx_queue.avail->flags);
+	}
+
+	//kprintf("virtio-net receivePacket(): done\n");
+	debugger_receive_packet_mem = NULL;
+	debugger_receive_packet_length = NULL;
 }
+
+static void vring_push_free_desc(virtio_net_virtqueue& queue, uint16_t free_idx);
+static int32_t vring_pop_free_desc(virtio_net_virtqueue& queue);
 
 void eu_philjordan_virtio_net::sendPacket(void *pkt, UInt32 pktSize)
 {
-	#warning TODO
+	//kprintf("virtio-net sendPacket(): %lu bytes\n", pktSize);
+	if (pktSize > kIOEthernetMaxPacketSize)
+	{
+		kprintf("virtio-net sendPacket(): Packet too big, aborting.\n");
+		return;
+	}
+	if (!debugger_transmit_packet)
+	{
+		kprintf("virtio-net sendPacket(): Driver not ready, aborting.\n");
+		return;
+	}
+	uint32_t head_desc = vring_pop_free_desc(tx_queue);
+	uint32_t main_desc = vring_pop_free_desc(tx_queue);
+	if (main_desc < 0)
+	{
+		if (head_desc >= 0)
+			vring_push_free_desc(tx_queue, head_desc);
+		kprintf("virtio-net sendPacket(): No free virtqueue descriptors.\n");
+		return;
+	}
+	
+	if (!OSCompareAndSwap(kDebuggerTransmitStateIdle, kDebuggerTransmitStateQueued, &debugger_transmit_state))
+	{
+		kprintf("virtio-net sendPacket(): State error (%lu), aborting.\n", debugger_transmit_state);
+		return;
+	}
+	virtio_net_packet* packet = debugger_transmit_packet;
+	memcpy(mbuf_data(packet->mbuf), pkt, pktSize);
+	// clear the "no interrupt" bit in the transmit queue
+	#warning TODO: This is only correct for little endian
+	bool enabled_interrupt = OSTestAndClear(0, (UInt8*)&tx_queue.avail->flags);
+	OSSynchronizeIO();
+
+	packet->header.flags = 0;
+	packet->header.gso_type = VIRTIO_NET_HDR_GSO_NONE;
+	packet->header.hdr_len = sizeof(packet->header);
+	packet->header.gso_size = 0;
+	packet->header.csum_start = 0;
+	packet->header.csum_offset = 0;
+	
+	// fill out descriptors
+	tx_queue.desc[head_desc].addr = packet->mem->getPhysicalAddress();
+	tx_queue.desc[head_desc].len = sizeof(packet->header);
+	tx_queue.desc[head_desc].flags = VRING_DESC_F_NEXT;
+	tx_queue.desc[head_desc].next = main_desc;
+	tx_queue.desc[main_desc].addr = mbuf_data_to_physical(mbuf_data(packet->mbuf));
+	tx_queue.desc[main_desc].len = pktSize;
+	tx_queue.desc[main_desc].flags = 0;
+	tx_queue.desc[main_desc].next = UINT16_MAX;
+	
+	uint16_t last_used_idx = tx_queue.used->idx;
+	tx_queue.packets_for_descs[head_desc] = debugger_transmit_packet;
+	uint16_t avail_idx = tx_queue.avail->idx;
+	tx_queue.avail->ring[avail_idx % tx_queue.num] = head_desc;
+	/*kprintf("virtio-net sendPacket(): Adding packet to tx queue in descriptors %u and %u, available index %u.\n",
+		head_desc, main_desc, avail_idx);*/
+	tx_queue.avail->idx = ++avail_idx;
+	notifyQueueAvailIdx(tx_queue, avail_idx);
+	
+	unsigned spin_count = 0;
+	while (!OSCompareAndSwap(kDebuggerTransmitStateCompleted, kDebuggerTransmitStateIdle, &debugger_transmit_state))
+	{
+		// this means no other thread/interrupt has detected the packet as sent, so let's keep polling it ourselves
+		if (last_used_idx != tx_queue.used->idx)
+		{
+			vring_used_elem& used = tx_queue.used->ring[last_used_idx % tx_queue.num];
+			if (used.id == head_desc)
+			{
+				// this is the packet we just sent!
+				used.id = UINT16_MAX;
+				used.len = 0;
+				//kprintf("virtio-net sendPacket(): Debugger packet was found in used tx ring at index %u, finishing up.\n", last_used_idx);
+				freeDescriptorChain(tx_queue, head_desc);
+				OSCompareAndSwap(kDebuggerTransmitStateQueued, kDebuggerTransmitStateIdle, &debugger_transmit_state);
+				break;
+			}
+		}
+		IODelay(20);
+		OSSynchronizeIO();
+		++spin_count;
+	}
+	
+	if (enabled_interrupt)
+	{
+		// disable interrupt again
+		#warning LE only!
+		OSTestAndSet(0, (UInt8*)&tx_queue.avail->flags);
+	}
+	//kprintf("virtio-net sendPacket(): done, disposing of any other packets in the queue.\n");
+	releaseSentPackets(true);
 }
 
 static int32_t vring_pop_free_desc(virtio_net_virtqueue& queue)
@@ -1305,9 +1697,9 @@ bool eu_philjordan_virtio_net::populateReceiveBuffers()
 	return true;
 }
 
-void eu_philjordan_virtio_net::releaseSentPackets()
+void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 {
-	if (!work_loop || !work_loop->inGate())
+	if (!from_debugger && (!work_loop || !work_loop->inGate()))
 	{
 		kprintf("virtio-net releaseSentPackets(): Warning! Not holding work-loop gate!\n");
 	}
@@ -1316,12 +1708,41 @@ void eu_philjordan_virtio_net::releaseSentPackets()
 	{
 		vring_used_elem& used = tx_queue.used->ring[tx_queue.last_used_idx % tx_queue.num];
 		uint16_t used_desc = used.id;
-#warning TODO: defend against out-of-range indices
+		if (used_desc == UINT16_MAX && used.len == 0)
+		{
+			// this was already dealt with by the debugger
+			if (!from_debugger)
+				kprintf("virtio-net releaseSentPackets(): Warning! Detected 'used' slot used for debugger packet.\n");
+			++tx_queue.last_used_idx;
+			continue;
+		}
+		if (used_desc >= tx_queue.num)
+		{
+			IOLog("virtio-net releaseSentPackets(): Warning! Out of range descriptor index %u in used transmit queue.\n", used_desc);
+			++tx_queue.last_used_idx;
+			continue;
+		}
 		virtio_net_packet* packet = tx_queue.packets_for_descs[used_desc];
 
 		if (packet)
 		{
-			if (packet->mbuf)
+			if (packet == debugger_transmit_packet)
+			{
+				// this packet was queued with the debugging API, don't free it, but notify the debugger if necessary
+				tx_queue.packets_for_descs[used_desc] = NULL;
+				if(OSCompareAndSwap(kDebuggerTransmitStateQueued, kDebuggerTransmitStateCompleted, &debugger_transmit_state))
+				{
+					kprintf("virtio-net: releaseSentPackets(): detected KDP transmit packet and notified debugger.\n");
+					freeDescriptorChain(tx_queue, used_desc);
+				}
+				else
+				{
+					kprintf("virtio-net: releaseSentPackets(): detected KDP transmit packet but debugger had already been notified.\n");
+				}
+				++tx_queue.last_used_idx;
+				continue;
+			}
+			else if (packet->mbuf)
 			{
 				freePacket(packet->mbuf);
 			}
@@ -1377,6 +1798,16 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 		vring_used_elem& used = rx_queue.used->ring[rx_queue.last_used_idx % rx_queue.num];
 		uint16_t used_desc = used.id;
 #warning TODO: defend against out-of-range indices
+		if (used_desc >= rx_queue.num)
+		{
+			if (!(used_desc == UINT16_MAX && used.len == 0))
+			{
+				IOLog("virtio-net handleReceivedPackets(): Warning! Out of range descriptor %u in used ring, skipping.\n",
+					used_desc);
+			}
+			++rx_queue.last_used_idx;
+			continue;
+		}
 		virtio_net_packet* packet = rx_queue.packets_for_descs[used_desc];
 		
 		// work out actual packet length, without the header
@@ -1483,6 +1914,16 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 	IOLog("virtio-net stop()\n");
 	if (provider != this->pci_dev)
 		IOLog("Warning: stopping virtio-net with a different provider!?\n");
+	
+	if (debugger_transmit_packet)
+	{
+		if (debugger_transmit_packet->mbuf)
+			freePacket(debugger_transmit_packet->mbuf);
+		debugger_transmit_packet->mbuf = NULL;
+		if (debugger_transmit_packet->mem)
+			debugger_transmit_packet->mem->release();
+		debugger_transmit_packet = NULL;
+	}
 	
 	if (driver_state == kDriverStateEnabled)
 	{
