@@ -735,7 +735,7 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	}
 	else
 	{
-		IOLog("virtio-net start(): Debug client attached successfully.\n");
+		PJLogVerbose("virtio-net start(): Debug client attached successfully.\n");
 	}
 	return true;
 }
@@ -967,7 +967,10 @@ IOReturn eu_philjordan_virtio_net::gatedEnableDebugger(IOKernelDebugger* debugge
 	}
 	
 	bool ok = enablePartial();
-	IOLog("virtio-net enable(): Starting debugger %s.\n", ok ? "succeeded" : "failed");
+#ifndef PJ_VIRTIO_NET_VERBOSE
+	if (!ok)
+#endif
+		IOLog("virtio-net enable(): Starting debugger %s.\n", ok ? "succeeded" : "failed");
 	driver_state = ok ? kDriverStateEnabledDebugging : kDriverStateEnableFailed;
 	return ok ? kIOReturnSuccess : kIOReturnError;
 }
@@ -1101,6 +1104,7 @@ IOReturn eu_philjordan_virtio_net::gatedEnableInterface(IONetworkInterface* inte
 		IOLog("virtio-net enable(): Bad driver state %d (expected %d or %d), aborting.\n", driver_state, kDriverStateStarted, kDriverStateEnabledDebugging);
 		return kIOReturnInvalid;
 	}
+	bool debugger = kDriverStateEnabledDebugging;
 	if (driver_state != kDriverStateEnabledDebugging)
 		driver_state = kDriverStateEnableFailed;
 	if (interface != this->interface)
@@ -1139,7 +1143,7 @@ IOReturn eu_philjordan_virtio_net::gatedEnableInterface(IONetworkInterface* inte
 	
 	updateLinkStatus();
 	
-	driver_state = kDriverStateEnabled;
+	driver_state = debugger ? kDriverStateEnabledBoth : kDriverStateEnabled;
 
 	return kIOReturnSuccess;
 }
@@ -1164,7 +1168,7 @@ void eu_philjordan_virtio_net::clearVirtqueuePackets(virtio_net_virtqueue& queue
 
 IOReturn eu_philjordan_virtio_net::disable(IOKernelDebugger *debugger)
 {
-	IOLog("virtio-net disable(): Disabling debugger.\n");
+	PJLogVerbose("virtio-net disable(): Disabling debugger.\n");
 	if (driver_state != kDriverStateEnabledDebugging && driver_state != kDriverStateEnabledBoth)
 	{
 		IOLog("virtio-net disable(): Bad driver state %d, aborting.\n", driver_state);
@@ -1175,19 +1179,19 @@ IOReturn eu_philjordan_virtio_net::disable(IOKernelDebugger *debugger)
 	{
 		disablePartial();
 		driver_state = kDriverStateStarted;
-		IOLog("virtio-net disable(): Disabled device altogether.\n");
+		PJLogVerbose("virtio-net disable(): Disabled device altogether.\n");
 	}
 	else
 	{
 		driver_state = kDriverStateEnabled;
-		IOLog("virtio-net disable(): Disabled debugger, interface client still active.\n");
+		PJLogVerbose("virtio-net disable(): Disabled debugger, interface client still active.\n");
 	}
 	return kIOReturnSuccess;
 }
 
 IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 {
-	IOLog("virtio-net disable()\n");
+	PJLogVerbose("virtio-net disable()\n");
 	if (driver_state != kDriverStateEnabled && driver_state != kDriverStateEnabledBoth)
 	{
 		IOLog("virtio-net disable(): Bad driver state %d (expected %d), aborting.\n", driver_state, kDriverStateEnabled);
@@ -1211,7 +1215,7 @@ IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 	if (driver_state == kDriverStateEnabledBoth)
 	{
 		driver_state = kDriverStateEnabledDebugging;
-		IOLog("virtio-net disable(): Transitioned to debugger-only state.\n");
+		PJLogVerbose("virtio-net disable(): Transitioned to debugger-only state.\n");
 	}
 	else
 	{
@@ -1840,7 +1844,7 @@ const OSString* eu_philjordan_virtio_net::newModelString() const
 
 void eu_philjordan_virtio_net::stop(IOService* provider)
 {
-	IOLog("virtio-net stop()\n");
+	PJLogVerbose("virtio-net stop()\n");
 	if (provider != this->pci_dev)
 		IOLog("Warning: stopping virtio-net with a different provider!?\n");
 	
@@ -1884,7 +1888,7 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 
 void eu_philjordan_virtio_net::free()
 {
-	IOLog("virtio-net free()\n");
+	PJLogVerbose("virtio-net free()\n");
 	
 	release_obj(packet_bufdesc_pool);
 	release_obj(interface);
