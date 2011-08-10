@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		298A5AC413F2BDEE00348079 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 298A5AC313F2BDED00348079 /* LICENSE */; };
 		299F18F313DC183D000200A5 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 299F18F113DC183D000200A5 /* InfoPlist.strings */; };
 		299F18F613DC183D000200A5 /* virtio_net.h in Headers */ = {isa = PBXBuildFile; fileRef = 299F18F513DC183D000200A5 /* virtio_net.h */; };
 		299F18F813DC183D000200A5 /* virtio_net.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 299F18F713DC183D000200A5 /* virtio_net.cpp */; };
@@ -15,6 +16,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		298A5AC313F2BDED00348079 /* LICENSE */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
 		299F18E913DC183D000200A5 /* virtio-net.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "virtio-net.kext"; sourceTree = BUILT_PRODUCTS_DIR; };
 		299F18ED13DC183D000200A5 /* Kernel.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Kernel.framework; path = System/Library/Frameworks/Kernel.framework; sourceTree = SDKROOT; };
 		299F18F013DC183D000200A5 /* virtio-net-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "virtio-net-Info.plist"; sourceTree = "<group>"; };
@@ -88,6 +90,7 @@
 				299F18F013DC183D000200A5 /* virtio-net-Info.plist */,
 				299F18F113DC183D000200A5 /* InfoPlist.strings */,
 				299F18F413DC183D000200A5 /* virtio-net-Prefix.pch */,
+				298A5AC313F2BDED00348079 /* LICENSE */,
 			);
 			name = "Supporting Files";
 			sourceTree = "<group>";
@@ -155,6 +158,7 @@
 			files = (
 				299F18F313DC183D000200A5 /* InfoPlist.strings in Resources */,
 				29CD526E13DD86D40062DAA6 /* readme.md in Resources */,
+				298A5AC413F2BDEE00348079 /* LICENSE in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -150,6 +150,9 @@ template <typename T> void release_obj(T*& obj)
 
 bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 {
+	IOLog("virtio-net driver: Copyright 2011 Phil Jordan <phil@philjordan.eu>; all rights reserved.\n"
+		"virtio specification and header: Copyright 2007, 2009, IBM Corporation and Copyright 2011, Red Hat, Inc; all rights reserved.\n"
+		"For details, see the LICENSE and readme.md files in virtio-net KEXT bundle.\n")
 	PJLogVerbose("virtio-net init()\n");
 	bool ok = super::init(properties);
 	if (!ok)
