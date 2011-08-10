@@ -17,11 +17,11 @@
 	<key>CFBundlePackageType</key>
 	<string>KEXT</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.2</string>
+	<string>0.9</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleVersion</key>
-	<string>0.2</string>
+	<string>0.9</string>
 	<key>IOKitPersonalities</key>
 	<dict>
 		<key>VirtioNet</key>
@@ -36,11 +36,6 @@
 			<string>0x10001AF4&amp;0xffc0ffff</string>
 			<key>IOProviderClass</key>
 			<string>IOPCIDevice</string>
-			<key>VirtioNetDriverParams</key>
-			<dict>
-				<key>Test</key>
-				<integer>100</integer>
-			</dict>
 		</dict>
 	</dict>
 	<key>NSHumanReadableCopyright</key>
