@@ -615,7 +615,7 @@ uint16_t eu_philjordan_virtio_net::virtioReadOptionalConfigFieldsGetDeviceSpecif
 	/* Read out the flexible config space */
 	size_t config_offset = VIRTIO_PCI_CONF_OFFSET_END_HEADER;
 
-#warning TODO: find out how to detect if MSI-X is enabled (I don't think it ever is on Mac OS X)
+	// TODO: find out how to detect if MSI-X is enabled (I don't think it ever is on Mac OS X)
 	// if (msix_enabled) config_offset += 4;
 	
 	ssize_t hi_features_offset = virtio_hi_feature_bitmap_offset(dev_features_lo, config_offset);
@@ -657,7 +657,7 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	}
 	else
 	{
-		IOLog("Reported MTU: %lu bytes\n", mtu);
+		PJLogVerbose("Reported MTU: %lu bytes\n", mtu);
 	}
 
 	IOPCIDevice* pci = OSDynamicCast(IOPCIDevice, provider);
@@ -684,7 +684,9 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	
 	// partially start up the device
 	uint32_t dev_features = virtioResetInitAndReadFeatureBits();
+#ifdef PJ_VIRTIO_NET_VERBOSE
 	virtio_log_supported_features(dev_features);
+#endif
 	
 	// We can use the notify-on-empty feature to permanently disable transmission interrupts
 	feature_notify_on_empty = (0 != (dev_features & VIRTIO_F_NOTIFY_ON_EMPTY));
@@ -1733,7 +1735,10 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 			uint16_t desc = used_desc;
 			while (true)
 			{
-#warning TODO: Defend against infinite loop (out of range descriptors, circular lists)
+				// TODO: Defend against infinite loop (out of range descriptors, circular lists)
+				/* note that lacking any driver bugs, this will only defend against a
+				 * buggy/malicious hypervisor, which is like fighting windmills.
+				 */
 				IOLog("virtio-net releaseSentPackets(): used buffer %u: length %u, associated packet: %p\n",
 					desc, tx_queue.desc[desc].len, packet);
 				if (0 == (tx_queue.desc[desc].flags & VRING_DESC_F_NEXT))
@@ -1761,7 +1766,6 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 	{
 		vring_used_elem& used = rx_queue.used->ring[rx_queue.last_used_idx % rx_queue.num];
 		uint16_t used_desc = used.id;
-#warning TODO: defend against out-of-range indices
 		if (used_desc >= rx_queue.num)
 		{
 			if (!(used_desc == UINT16_MAX && used.len == 0))
@@ -1820,7 +1824,10 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 			uint16_t desc = used_desc;
 			while (true)
 			{
-#warning TODO: Defend against infinite loop (out of range descriptors, circular lists)
+				// TODO: Defend against infinite loop (out of range descriptors, circular lists)
+				/* note that lacking any driver bugs, this will only defend against a
+				 * buggy/malicious hypervisor, which is like fighting windmills.
+				 */
 				IOLog("virtio-net: handleReceivedPackets(): used buffer %u: length %u, associated packet: %p\n",
 					desc, rx_queue.desc[desc].len, packet);
 				if (0 == (rx_queue.desc[desc].flags & VRING_DESC_F_NEXT))
@@ -1845,7 +1852,10 @@ void eu_philjordan_virtio_net::freeDescriptorChain(virtio_net_virtqueue& queue, 
 	uint16_t desc = desc_chain_head; 
 	while (true)
 	{
-#warning TODO: Defend against infinite loop (out of range descriptors, circular lists)
+		// TODO: Defend against infinite loop (out of range descriptors, circular lists)
+		/* note that lacking any driver bugs, this will only defend against a
+		 * buggy/malicious hypervisor, which is like fighting windmills.
+		 */
 		uint16_t next = queue.desc[desc].next;
 		bool has_next = (0 != (queue.desc[desc].flags & VRING_DESC_F_NEXT));
 		queue.desc[desc].addr = 0;
