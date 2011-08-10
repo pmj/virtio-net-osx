@@ -125,9 +125,9 @@ static inline void vring_init(struct vring *vr, unsigned int num, void *p,
 
 static inline unsigned vring_size(unsigned int num, unsigned long align)
 {
-	return ((sizeof(struct vring_desc) * num + sizeof(uint16_t) * (2 + num)
+	return (unsigned)(((sizeof(struct vring_desc) * num + sizeof(uint16_t) * (2 + num)
 		+ align - 1) & ~(align - 1))
-		+ sizeof(uint16_t) * 3 + sizeof(struct vring_used_elem) * num;
+		+ sizeof(uint16_t) * 3 + sizeof(struct vring_used_elem) * num);
 }
 
 /* The following is used with USED_EVENT_IDX and AVAIL_EVENT_IDX */

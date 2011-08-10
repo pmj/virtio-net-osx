@@ -970,7 +970,7 @@ bool eu_philjordan_virtio_net::setupVirtqueue(
 				
 	virtqueue_init(queue, queue_buffer, queue_size, queue_id);
 
-	configWriteLE32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, queue_buffer->getPhysicalAddress() >> 12u);
+	configWriteLE32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, static_cast<uint32_t>(queue_buffer->getPhysicalAddress() >> 12u));
 	
 	return true;
 }
@@ -1391,7 +1391,7 @@ void eu_philjordan_virtio_net::receivePacket(void *pkt, UInt32 *pktSize, UInt32 
 			
 			rx_queue.last_used_idx = used_idx + 1;
 			
-			uint32_t len = *pktSize = used.len - sizeof(virtio_net_hdr);
+			uint32_t len = *pktSize = static_cast<uint32_t>(used.len - sizeof(virtio_net_hdr));
 			//kprintf("virtio-net receivePacket(): Copying received debugger packet (length %u).\n", len);
 			memcpy(pkt, mbuf_data(packet->mbuf), len);
 			used.id = UINT16_MAX;
@@ -1577,13 +1577,13 @@ void eu_philjordan_virtio_net::outputPacketSegment(IOMemoryCursor::PhysicalSegme
 
 	vring_desc& buf = ctx->queue.desc[desc];
 	buf.addr = segment.location;
-	buf.len = segment.length;
+	buf.len = static_cast<uint32_t>(segment.length);
 	buf.flags = ctx->buffer_direction_flag;
 	buf.next = UINT16_MAX;
 	
 	ctx->tail_desc = desc;
 	++ctx->segments_created;
-	ctx->total_length += segment.length;
+	ctx->total_length += static_cast<uint32_t>(segment.length);
 	//IOLog("virtio-net outputPacketSegment(): Added segment as buffer in descriptor %u, total packet length so far: %u.\n", desc, ctx->total_length);
 }
 
@@ -1852,7 +1852,7 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 		uint32_t len = used.len;
 		if (len >= sizeof(virtio_net_hdr))
 		{
-			len -= sizeof(virtio_net_hdr);
+			len -= static_cast<uint32_t>(sizeof(virtio_net_hdr));
 		}
 		else
 		{
