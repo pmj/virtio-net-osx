@@ -88,6 +88,7 @@ bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 	if (!ok)
 		return false;
 	
+	transmit_packets_to_free = NULL;
 	driver_state = kDriverStateInitial;
 	
 	packet_bufdesc_pool = OSSet::withCapacity(16);
@@ -285,8 +286,13 @@ struct virtio_net_hdr
 
 struct virtio_net_packet
 {
-	// Used as the first virtqueue buffer.
-	virtio_net_hdr header;
+	union
+	{
+		// Used as the first virtqueue buffer.
+		virtio_net_hdr header;
+		// When dequeued by the debugger, the packet is not freed but simply linked to the
+		virtio_net_packet* next_free;
+	};
 	// The mbuf used for the packet body
 	mbuf_t mbuf;
 	// The memory descriptor holding this packet structure
@@ -1414,8 +1420,6 @@ void eu_philjordan_virtio_net::sendPacket(void *pkt, UInt32 pktSize)
 	}
 	
 	//kprintf("virtio-net sendPacket(): done, disposing of any other packets in the queue.\n");
-	// not 100% sure this is safe - it calls freePacket() which may be a problem? 
-#warning TODO: Instead of calling freePacket, put all the packets in a linked list which is freed when the debugger ends
 	releaseSentPackets(true);
 }
 
@@ -1642,6 +1646,25 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 	{
 		kprintf("virtio-net releaseSentPackets(): Warning! Not holding work-loop gate!\n");
 	}
+	
+	if (!from_debugger)
+	{
+		// free any packets dequeued by the debugger
+		virtio_net_packet* cur = transmit_packets_to_free;
+		transmit_packets_to_free = NULL;
+		while (cur)
+		{
+			virtio_net_packet* next = cur->next_free;
+			
+			freePacket(cur->mbuf);
+			if (cur->mem)
+			{
+				packet_bufdesc_pool->setObject(cur->mem);
+				cur->mem->release();
+			}
+			cur = next;
+		}
+	}
 
 	while (tx_queue.last_used_idx != tx_queue.used->idx)
 	{
@@ -1676,7 +1699,15 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 			}
 			else if (packet->mbuf)
 			{
-#warning TODO: in the debugger, just put all packets to free in a linked list
+				if (from_debugger)
+				{
+					// in the debugger, just put all packets to free in a linked list to avoid memory operations
+					packet->next_free = transmit_packets_to_free;
+					transmit_packets_to_free = packet;
+					freeDescriptorChain(tx_queue, used_desc);
+					++tx_queue.last_used_idx;
+					continue;
+				}
 				freePacket(packet->mbuf);
 			}
 			else

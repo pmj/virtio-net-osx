@@ -270,6 +270,9 @@ protected:
 	IOKernelDebugger* debugger;
 	/// A packet and associated mbuf reserved for transmitting packets supplied by the debugger
 	virtio_net_packet* debugger_transmit_packet;
+	/// Linked list of packets to be freed
+	/** accumulated by the debugger dequeueing used tx packets */
+	struct virtio_net_packet* transmit_packets_to_free;
 };
 
 #endif
