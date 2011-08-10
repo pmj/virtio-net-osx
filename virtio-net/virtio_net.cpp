@@ -470,6 +470,20 @@ void eu_philjordan_virtio_net::interruptAction(OSObject* me, IOInterruptEventSou
 	virtio_net->interruptAction(source, count);
 }
 
+bool eu_philjordan_virtio_net::updateLinkStatus()
+{
+	// Link status may have changed
+	int32_t status = readStatus();
+	bool link_is_up = (status & VIRTIO_NET_S_LINK_UP) != 0;
+
+	const OSDictionary* dict = getMediumDictionary();
+	IONetworkMedium* medium = dict ? IONetworkMedium::getMediumWithType(dict, kIOMediumEthernetAuto) : 0;
+	if (!medium)
+		IOLog("virtio-net updateLinkStatus: Warning, no medium found!\n");
+	setLinkStatus((link_is_up ? kIONetworkLinkActive : 0) | kIONetworkLinkValid, medium);
+	return link_is_up;
+}
+
 void eu_philjordan_virtio_net::interruptAction(IOInterruptEventSource* source, int count)
 {
 	//IOLog("Last ISR value: 0x%02X\n", last_isr);
@@ -488,18 +502,8 @@ void eu_philjordan_virtio_net::interruptAction(IOInterruptEventSource* source, i
 		{
 			if (status_field_offset > 0)
 			{
-				// Link status may have changed
-				int32_t status = readStatus();
-				if (status < 0)
-				{
-					IOLog("virtio-net interruptAction(): Reading link status unexpectedly failed.\n");
-				}
-				else
-				{
-					bool link_is_up = (status & VIRTIO_NET_S_LINK_UP) != 0;
-					IOLog("virtio-net: Device signaled link status change, link is now %s.\n", link_is_up ? "up" : "down");
-					setLinkStatus((link_is_up ? kIONetworkLinkActive : 0) | kIONetworkLinkValid);
-				}
+				bool up = updateLinkStatus();
+				IOLog("virtio-net interruptAction: Link change detected, link is now %s.\n", up ? "up" : "down");
 			}
 			else
 			{
@@ -1033,6 +1037,60 @@ IOReturn eu_philjordan_virtio_net::enable(IONetworkInterface* interface)
 	return runInCommandGate<IONetworkInterface, &eu_philjordan_virtio_net::gatedEnableInterface>(interface);
 }
 
+IOReturn eu_philjordan_virtio_net::selectMedium(const IONetworkMedium* medium)
+{
+	setSelectedMedium(medium);
+	return kIOReturnSuccess;
+}
+
+static bool virtio_net_add_medium(OSDictionary* medium_dict, IOMediumType type, uint64_t speed)
+{
+	IONetworkMedium* medium = IONetworkMedium::medium(type, 0);
+	if (!medium)
+		return false;
+	bool ok = IONetworkMedium::addMedium(medium_dict, medium);
+	medium->release();
+	return ok;
+}
+
+bool eu_philjordan_virtio_net::createMediumTable()
+{
+	OSDictionary* dict = OSDictionary::withCapacity(2);
+	if (!dict)
+	{
+		IOLog("virtio-net createMediumTable: Failed to allocate dictionary.\n");
+		return false;
+	}
+	
+	bool added = true;
+	added = added && virtio_net_add_medium(dict, kIOMediumEthernetNone, 0);
+	added = added && virtio_net_add_medium(dict, kIOMediumEthernetAuto, 0);
+	if (!added)
+	{
+		IOLog("virtio-net createMediumTable: Failed to allocate and add media to table.\n");
+		dict->release();
+		return false;
+	}
+	
+	if (!publishMediumDictionary(dict))
+	{
+		IOLog("virtio-net createMediumTable: Failed to publish medium dictionary.\n");
+		dict->release();
+		return false;
+	}
+	dict->release();
+
+	const OSDictionary* media = getMediumDictionary();
+	IONetworkMedium* medium = media ? IONetworkMedium::getMediumWithType(media, kIOMediumEthernetAuto) : NULL;
+	if (medium)
+		setCurrentMedium(medium);
+	else
+		IOLog("virtio-net createMediumTable: Warning! Failed to locate current medium in table.");
+	
+	return true;
+}
+
+
 IOReturn eu_philjordan_virtio_net::gatedEnableInterface(IONetworkInterface* interface)
 {
 	PJLogVerbose("virtio-net enable()\n");
@@ -1058,6 +1116,12 @@ IOReturn eu_philjordan_virtio_net::gatedEnableInterface(IONetworkInterface* inte
 		return kIOReturnError;
 	}
 	driver_state = kDriverStateEnableFailed;
+	
+	if (!createMediumTable())
+	{
+		IOLog("virtio-net enable(): Failed to set up interface media table\n");
+		return kIOReturnNoMemory;
+	}
 
 	// enable interrupts on the appropriate queues
 	rx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
@@ -1072,6 +1136,8 @@ IOReturn eu_philjordan_virtio_net::gatedEnableInterface(IONetworkInterface* inte
 	uint32_t capacity = max(16, tx_queue.num / 4); // each packet takes 2 buffers, try to always fill up half the virtqueue, hence a quarter
 	output_queue->setCapacity(capacity);
 	output_queue->start();
+	
+	updateLinkStatus();
 	
 	driver_state = kDriverStateEnabled;
 

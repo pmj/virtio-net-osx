@@ -68,8 +68,10 @@ Startup and shutdown appear to work fine, as do disabling and re-enabling the
 device in Network Preferences and changing the adapter's configuration on the
 host side.
 
-The driver detects link status changes, but communicating this to the operating
-system does not seem to work correctly.
+The driver detects link status changes and correctly communicates it to the
+operating system. If you untick "cable connected" in the VirtualBox GUI for the
+network device, the adapter's dot in the guest's Network Preferences turns red,
+and back to green/yellow when you tick it.
 
 No advanced features offered by the "hardware" are currently supported by the
 driver. This includes checksum offloading, automatic fragmentation and reassembly

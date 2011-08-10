@@ -81,6 +81,8 @@ public:
 
 	virtual bool configureInterface(IONetworkInterface *netif);
 	virtual IOReturn getPacketFilters(const OSSymbol *group, UInt32 *filters) const;
+	
+	virtual IOReturn selectMedium(const IONetworkMedium* medium);
 protected:
 	/// Enable the device far enough to do debugging
 	/** Initialises with no output queue, no interrupts - that is done by the
@@ -89,6 +91,8 @@ protected:
 	bool enablePartial();
 	/// Revert enablePartial
 	void disablePartial();
+	/// Creates and publishes the table of possible media
+	bool createMediumTable();
 
 	template <typename P, IOReturn(eu_philjordan_virtio_net::*fn)(P* p)> static IOReturn runMemberInCommandGateAction(OSObject* owner, void* param, void*, void*, void*)
 	{
@@ -192,6 +196,9 @@ protected:
 
 	/// Read network device status register; returns negative value if unsupported
 	int32_t readStatus();
+	/// Reads the link status and reports it back to the interface
+	/** Returns true if the link is up, false if not. */
+	bool updateLinkStatus();
 	
 	/// Creates and activates the interrupt event source
 	/** Should be called as soon as the virtqueues become active, i.e. at the end of enable() */
