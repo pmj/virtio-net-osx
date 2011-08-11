@@ -591,12 +591,15 @@ void eu_philjordan_virtio_net::interruptAction(IOInterruptEventSource* source, i
 		if (rx_queue.last_used_idx != rx_queue.used->idx)
 		{
 			handleReceivedPackets();
-			populateReceiveBuffers();
 			/*
 			IOLog("virtio-net interruptAction(): Populated receive buffers: %u free descriptors left, avail idx %u\n",
 				rx_queue.num_free_desc, rx_queue.avail->idx);
 			*/
 		}
+		
+		// Ensure there are plenty of receive buffers
+		populateReceiveBuffers();
+		
 		// Dispose of any completed sent packets
 		if (tx_queue.last_used_idx != tx_queue.used->idx)
 		{
@@ -1336,15 +1339,22 @@ UInt32 eu_philjordan_virtio_net::outputPacket(mbuf_t buffer, void *param)
 {
 	if (tx_queue.num_free_desc < 3)
 	{
-		IOLog("virtio-net outputPacket(): Transmit queue full, trying to free up some descriptors...\n");
-		releaseSentPackets();
+		//IOLog("virtio-net outputPacket(): Transmit queue full, trying to free up some descriptors...\n");
+		runInCommandGate<bool, &eu_philjordan_virtio_net::releaseSentPackets>(false);
 		if (tx_queue.num_free_desc < 3)
 		{
-			IOLog("virtio-net outputPacket(): Transmit queue really full, pipeline stalled.\n");
+			//IOLog("virtio-net outputPacket(): Transmit queue really full, pipeline stalled.\n");
+			// activate interrupt for when a packet is sent if we're currently only being notified when empty
+			if (feature_notify_on_empty)
+			{
+				tx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
+				OSSynchronizeIO();
+			}
+			was_stalled = true;
 			return kIOReturnOutputStall;
 		}
 	}
-	
+		
 	if (mbuf_len(buffer) > kIOEthernetMaxPacketSize)
 	{
 		IOLog("virtio-net outputPacket(): dropped oversized packet of length %lu\n", mbuf_len(buffer));
@@ -1534,14 +1544,12 @@ struct virtio_net_cursor_segment_context
 	eu_philjordan_virtio_net* me;
 	
 	virtio_net_virtqueue& queue;
-	/// Tracks the total length across all added segments, starts as 0.
-	uint32_t total_length;
-	/// Tracks the number of non-zero segments, even in the event of an error.
-	uint16_t num_segments;
-	/// Tracks the number of segments which were successfully added
-	uint16_t segments_created;
-	/// Descriptor index for the current tail of the buffer chain (initially the header buffer desc)
-	uint16_t tail_desc;
+	/// Array of descriptor indices in the chain
+	int32_t* descs;
+	/// Number of elements in the descs array
+	unsigned max_num_descs;
+	/// Index of the highest filled segment
+	int32_t max_segment_created;
 	/// Bits to OR into the buffer's "flags" field to indicate reading or writing
 	uint8_t buffer_direction_flag;
 	
@@ -1553,37 +1561,42 @@ struct virtio_net_cursor_segment_context
 };
 void eu_philjordan_virtio_net::outputPacketSegment(IOMemoryCursor::PhysicalSegment segment, void* segment_context, UInt32 segmentIndex)
 {
-	// ignore zero-length segments
-	if (segment.length == 0)
-		return;
-	
 	//IOLog("virtio-net outputPacketSegment(): segment %lu at 0x%08lX, length %lu.\n", segmentIndex, segment.location, segment.length);
 	virtio_net_cursor_segment_context* ctx = static_cast<virtio_net_cursor_segment_context*>(segment_context);
-	ctx->num_segments++;
 	if (ctx->error)
 		return;
 	
-			
-	const int32_t desc = vring_pop_free_desc(ctx->queue);
+	if (segmentIndex >= ctx->max_num_descs)
+	{
+		ctx->error = true;
+		return;
+	}
+	
+	if (segment.length < 1)
+		IOLog("virtio-net outputPacketSegment(): Zero length segment!\n");
+	
+	int32_t desc = ctx->descs[segmentIndex];
+	if (desc < 0)
+		desc = vring_pop_free_desc(ctx->queue);
+	/*else
+		IOLog("virtio-net outputPacketSegment(): Note: rewriting descriptor %u! Prev addr: %llu len: %u, now addr: %lu, len: %lu\n",
+			desc, ctx->queue.desc[desc].addr, ctx->queue.desc[desc].len, segment.location, segment.length);
+	*/
 	if (desc < 0)
 	{
 		IOLog("virtio-net outputPacketSegment(): failed to allocate descriptor.\n");
 		ctx->error = ctx->out_of_descriptors = true;
 		return;
 	}
-	vring_desc& prev_buf = ctx->queue.desc[ctx->tail_desc];
-	prev_buf.next = desc;
-	prev_buf.flags |= VRING_DESC_F_NEXT;
 
+	ctx->descs[segmentIndex] = desc;
 	vring_desc& buf = ctx->queue.desc[desc];
 	buf.addr = segment.location;
 	buf.len = static_cast<uint32_t>(segment.length);
 	buf.flags = ctx->buffer_direction_flag;
 	buf.next = UINT16_MAX;
-	
-	ctx->tail_desc = desc;
-	++ctx->segments_created;
-	ctx->total_length += static_cast<uint32_t>(segment.length);
+	if ((int32_t)segmentIndex > ctx->max_segment_created)
+		ctx->max_segment_created = segmentIndex;
 	//IOLog("virtio-net outputPacketSegment(): Added segment as buffer in descriptor %u, total packet length so far: %u.\n", desc, ctx->total_length);
 }
 
@@ -1628,30 +1641,55 @@ bool eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_v
 	head_buf.len = sizeof(virtio_net_hdr);
 	head_buf.flags = direction_flag;
 	head_buf.next = 0;
-
-	struct virtio_net_cursor_segment_context segment_context = {
-		this, queue, 0, 0, 0, head_desc, direction_flag, false, false
-	};
 	
 	//IOLog("virtio-net addPacketToQueue(): begin generating physical segments.\n");
+	// Any more than 3 is just wasteful
+	uint32_t max_segs = min(3, queue.num_free_desc);
+	int32_t descs[max_segs];
+	for (unsigned i = 0; i < max_segs; ++i)
+		descs[i] = -1;
+
+	struct virtio_net_cursor_segment_context segment_context = {
+		this, queue, descs, max_segs, -1, direction_flag, false, false
+	};
+	
 	uint32_t segments = packet_memory_cursor->genPhysicalSegments(
-		packet_mbuf, &segment_context, queue.num_free_desc, true /* coalesce if necessary */);
+		packet_mbuf, &segment_context, max_segs, true /* coalesce if necessary */);
 	if (segments == 0 || segment_context.error)
 	{
 		IOLog("virtio-net addPacketToQueue(): an error occurred. %u segments produced, "
-			"%u non-zero segments encountered, %u successfully added (%u bytes), error: %s, out of descriptors: %s.\n",
-			segments, segment_context.num_segments, segment_context.segments_created,
-			segment_context.total_length, segment_context.error ? "yes" : "no", segment_context.out_of_descriptors ? "yes" : "no");
-		freeDescriptorChain(queue, head_desc);
+			"max index: %d, error: %s, out of descriptors: %s.\n",
+			segments, segment_context.max_segment_created,
+			segment_context.error ? "yes" : "no", segment_context.out_of_descriptors ? "yes" : "no");
+		for (unsigned i = 0; i < max_segs; ++i)
+		{
+			if (descs[i] >= 0)
+			{
+				vring_push_free_desc(queue, descs[i]);
+			}
+		}
+		
 		release_obj(packet_mem);
 		return false;
 	}
-	else
-	{
-		//IOLog("virtio-net addPacketToQueue(): %u of %u segments created, %u bytes\n",
-		//	segment_context.segments_created, segments, segment_context.total_length);
-	}
 	
+	if (segments != segment_context.max_segment_created + 1)
+	{
+		IOLog("virtio-net addPacketToQueue(): genPhysicalSegments reports %u, max index is %d!\n", segments, segment_context.max_segment_created);
+	}
+
+	uint16_t prev = head_desc;
+	for (unsigned i = 0; i < segments; ++i)
+	{
+		if (descs[i] < 0)
+		{
+			IOLog("virtio-net addPacketToQueue(): no descriptor for index %u (%u total), max seg %d\n", i, segments, segment_context.max_segment_created);
+			continue;
+		}
+		queue.desc[prev].next = descs[i];
+		queue.desc[prev].flags |= VRING_DESC_F_NEXT;
+		prev = descs[i];
+	}
 	
 	// initialise the network header
 	packet->header.flags = 0;
@@ -1690,7 +1728,14 @@ bool eu_philjordan_virtio_net::populateReceiveBuffers()
 		// allocate data buffer and header memory
 		mbuf_t packet_mbuf = allocatePacket(kIOEthernetMaxPacketSize);
 		if (!packet_mbuf)
+		{
+			static int alloc_fail_count = 0;
+			if (alloc_fail_count % 10 == 0 && alloc_fail_count < 100)
+				IOLog("virtio-net populateReceiveBuffers(): Warning! Failed to allocate mbuf for receiving (%d).\n", alloc_fail_count);
+			++alloc_fail_count;
+			
 			return (added && notifyQueueAvailIdx(rx_queue, avail_idx)), false;
+		}
 		
 		{
 			size_t len = mbuf_len(packet_mbuf);
@@ -1702,7 +1747,13 @@ bool eu_philjordan_virtio_net::populateReceiveBuffers()
 		
 		// this will increment avail_idx if successful
 		if (!addPacketToQueue(packet_mbuf, rx_queue, true /* packet is writeable */, avail_idx))
+		{
+			static int add_fail_count = 0;
+			if (add_fail_count % 10 == 0 && add_fail_count < 100)
+				IOLog("virtio-net populateReceiveBuffers(): Warning! Failed to add packet to receive queue (%d).\n", add_fail_count);
+			++add_fail_count;
 			return freePacket(packet_mbuf), (added && notifyQueueAvailIdx(rx_queue, avail_idx)), false;
+		}
 		
 		added = true;
 	}
@@ -1820,6 +1871,14 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 		// recycle the descriptors
 		freeDescriptorChain(tx_queue, used_desc);
 		++tx_queue.last_used_idx;
+	}
+
+	// clear any stall condition
+	if (!from_debugger && was_stalled)
+	{
+		//IOLog("virtio-net: Unsticking the output queue after a stall\n");
+		was_stalled = false;
+		getOutputQueue()->start();
 	}
 }
 

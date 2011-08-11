@@ -171,6 +171,17 @@ protected:
 	{
 		return getCommandGate()->runAction(runMemberInCommandGateAction<P, fn>, static_cast<void*>(p));
 	}
+	template <typename P, void(eu_philjordan_virtio_net::*fn)(P p)> static IOReturn runMemberInCommandGateAction(OSObject* owner, void* param, void*, void*, void*)
+	{
+		eu_philjordan_virtio_net* array = OSDynamicCast(eu_philjordan_virtio_net, owner);
+		assert(array);
+		(array->*fn)(*static_cast<P*>(param));
+		return kIOReturnSuccess;
+	}
+	template <typename P, void(eu_philjordan_virtio_net::*fn)(P p)> IOReturn runInCommandGate(P p)
+	{
+		return getCommandGate()->runAction(runMemberInCommandGateAction<P, fn>, static_cast<void*>(&p));
+	}
 
 	IOReturn gatedEnableInterface(IONetworkInterface* interface);
 	IOReturn gatedEnableDebugger(IOKernelDebugger* debugger);
@@ -340,6 +351,8 @@ protected:
 	/// Linked list of packets to be freed
 	/** accumulated by the debugger dequeueing used tx packets */
 	struct virtio_net_packet* transmit_packets_to_free;
+	
+	bool was_stalled;
 };
 
 #endif
