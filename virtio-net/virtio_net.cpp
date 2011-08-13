@@ -148,6 +148,46 @@ template <typename T> void release_obj(T*& obj)
 	}
 }
 
+static void virtio_net_log_property_dict(OSDictionary* props)
+{
+	IOLog("virtio-net: begin property dictionary:\n");
+	if (props)
+	{
+		OSCollectionIterator* it = OSCollectionIterator::withCollection(props);
+		if (it)
+		{
+			while (true)
+			{
+				OSObject* key = it->getNextObject();
+				if (!key)
+					break;
+				OSString* keystr = OSDynamicCast(OSString, key);
+				OSObject* val = props->getObject(keystr);
+				OSString* str = OSDynamicCast(OSString, val);
+				OSNumber* num = OSDynamicCast(OSNumber, val);
+				if (str)
+				{
+					IOLog("%s -> '%s'\n", keystr->getCStringNoCopy(), str->getCStringNoCopy());
+				}
+				else if (num)
+				{
+					IOLog("%s -> %llu\n", keystr->getCStringNoCopy(), num->unsigned64BitValue());
+				}
+				else if (val)
+				{
+					IOLog("%s -> [%s]\n", keystr->getCStringNoCopy(), val->getMetaClass()->getClassName());
+				}
+				else
+				{
+					IOLog("%s -> null\n", keystr->getCStringNoCopy());
+				}
+			}
+			it->release();
+		}
+	}
+	IOLog("virtio-net: end property dictionary\n");
+}
+
 bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 {
 	IOLog("virtio-net driver: Copyright 2011 Phil Jordan <phil@philjordan.eu>; all rights reserved.\n"
@@ -157,6 +197,24 @@ bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 	bool ok = super::init(properties);
 	if (!ok)
 		return false;
+	
+	OSNumber* max_tx_segments_val = NULL;
+	if (properties && ((max_tx_segments_val = OSDynamicCast(OSNumber, properties->getObject("PJVirtioMaxTransmitDataSegments")))))
+	{
+		if (max_tx_segments_val->unsigned64BitValue() > UINT16_MAX)
+			max_tx_data_segs = UINT16_MAX;
+		else
+			max_tx_data_segs = max_tx_segments_val->unsigned64BitValue();
+		if (max_tx_data_segs < 1)
+			max_tx_data_segs = 1;
+		IOLog("virtio-net: Maximum number of transmit data segments set to %u\n", max_tx_data_segs);
+	}
+	else
+	{
+		IOLog("virtio-net: Maximum number of transmit data segments defaulted to %u\n", 3);
+		max_tx_data_segs = 3;
+	}
+	//virtio_net_log_property_dict(properties);
 	
 	transmit_packets_to_free = NULL;
 	driver_state = kDriverStateInitial;
@@ -763,7 +821,17 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	
 	// We can use the notify-on-empty feature to permanently disable transmission interrupts
 	feature_notify_on_empty = (0 != (dev_features & VIRTIO_F_NOTIFY_ON_EMPTY));
-		
+	
+	#warning TODO
+#if 0
+	feature_checksum_offload = (0 != (dev_features & VIRTIO_NET_F_CSUM));
+	feature_tso_v4 = false;
+	if (feature_checksum_offload)
+	{
+		feature_tso_v4 = (0 != (dev_features & VIRTIO_NET_F_HOST_TSO4));
+	}
+#endif
+
 	size_t device_specific_offset = virtioReadOptionalConfigFieldsGetDeviceSpecificOffset();
 	
 	determineMACAddress(device_specific_offset);
@@ -1457,7 +1525,7 @@ void eu_philjordan_virtio_net::sendPacket(void *pkt, UInt32 pktSize)
 
 	packet->header.flags = 0;
 	packet->header.gso_type = VIRTIO_NET_HDR_GSO_NONE;
-	packet->header.hdr_len = sizeof(packet->header);
+	packet->header.hdr_len = 0;
 	packet->header.gso_size = 0;
 	packet->header.csum_start = 0;
 	packet->header.csum_offset = 0;
@@ -1644,7 +1712,7 @@ bool eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_v
 	
 	//IOLog("virtio-net addPacketToQueue(): begin generating physical segments.\n");
 	// Any more than 3 is just wasteful
-	uint32_t max_segs = min(3, queue.num_free_desc);
+	uint32_t max_segs = min(max_tx_data_segs, queue.num_free_desc);
 	int32_t descs[max_segs];
 	for (unsigned i = 0; i < max_segs; ++i)
 		descs[i] = -1;
@@ -1694,7 +1762,7 @@ bool eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_v
 	// initialise the network header
 	packet->header.flags = 0;
 	packet->header.gso_type = VIRTIO_NET_HDR_GSO_NONE;
-	packet->header.hdr_len = sizeof(packet->header);
+	packet->header.hdr_len = 0;
 	packet->header.gso_size = 0;
 	packet->header.csum_start = 0;
 	packet->header.csum_offset = 0;

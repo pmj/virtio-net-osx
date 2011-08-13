@@ -17,11 +17,11 @@
 	<key>CFBundlePackageType</key>
 	<string>KEXT</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.9</string>
+	<string>0.9.1</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleVersion</key>
-	<string>0.9</string>
+	<string>0.9.1</string>
 	<key>IOKitPersonalities</key>
 	<dict>
 		<key>VirtioNet</key>
@@ -36,6 +36,8 @@
 			<string>0x10001AF4&amp;0xffc0ffff</string>
 			<key>IOProviderClass</key>
 			<string>IOPCIDevice</string>
+			<key>PJVirtioMaxTransmitDataSegments</key>
+			<integer>1</integer>
 		</dict>
 	</dict>
 	<key>NSHumanReadableCopyright</key>

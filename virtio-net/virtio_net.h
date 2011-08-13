@@ -303,6 +303,10 @@ protected:
 	
 	DriverState driver_state;
 	
+	// Settings from the info.plist personality section (set in init())
+	/// Maximum number of physical data sections in a transmit packet
+	uint16_t max_tx_data_segs;
+	
 	/// The provider device. NOT retained.
 	IOPCIDevice* pci_dev;
 	/// Memory mapping of the virtio PCI configuration registers
