@@ -193,9 +193,15 @@ static void virtio_net_log_property_dict(OSDictionary* props)
 
 bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 {
-	IOLog("virtio-net driver: Copyright 2011 Phil Jordan <phil@philjordan.eu>; all rights reserved.\n"
-		"virtio specification and header: Copyright 2007, 2009, IBM Corporation and Copyright 2011, Red Hat, Inc; all rights reserved.\n"
-		"For details, see the LICENSE and readme.md files in virtio-net KEXT bundle.\n")
+	static bool has_shown_copyright_notice = false;
+	if (!has_shown_copyright_notice)
+	{
+		IOLog("virtio-net driver: Copyright 2011 Phil Jordan <phil@philjordan.eu>; all rights reserved.\n"
+			"virtio specification and header: Copyright 2007, 2009, IBM Corporation and Copyright 2011, Red Hat, Inc; all rights reserved.\n"
+			"For details, see the LICENSE and readme.md files in virtio-net KEXT bundle.\n");
+		has_shown_copyright_notice = true;
+	}
+
 	PJLogVerbose("virtio-net init()\n");
 	bool ok = super::init(properties);
 	if (!ok)
@@ -973,8 +979,41 @@ bool eu_philjordan_virtio_net::beginHandlingInterrupts()
 		IOLog("virtio-net beginHandlingInterrupts(): Error! PCI device must be known for generating interrupts.\n");
 		return false;
 	}
-	intr_event_source = new IOFilterInterruptEventSource();
-	if (!intr_event_source || !intr_event_source->init(this, &interruptAction, &interruptFilter, pci_dev))
+	
+	// Message signaled interrupts (MSI) are more efficient than the normal broadcast ones, so let's try to use them
+	int msi_index = -1;
+	int intr_index = 0;
+	
+	// keep trying interrupt source indices until we run out or find an MSI one
+	while (intr_index >= 0)
+	{
+		int intr_type = 0;
+		IOReturn ret = pci_dev->getInterruptType(intr_index, &intr_type);
+		if (ret != kIOReturnSuccess)
+			break;
+			
+		if (intr_type & kIOInterruptTypePCIMessaged)
+		{
+			// found MSI interrupt source
+			msi_index = intr_index;
+			break;
+		}
+		++intr_index;
+	}
+	
+	if (msi_index >= 0)
+	{
+		intr_index = msi_index;
+		IOLog("virtio-net beginHandlingInterrupts(): Enabled message signaled interrupts (index %d).\n", intr_index);
+	}
+	else
+	{
+		intr_index = 0;
+	}
+
+	
+	intr_event_source = IOFilterInterruptEventSource::filterInterruptEventSource(this, &interruptAction, &interruptFilter, pci_dev, intr_index);
+	if (!intr_event_source)
 	{
 		IOLog("virtio-net beginHandlingInterrupts(): Error! %s interrupt event source failed.\n", intr_event_source ? "Initialising" : "Allocating");
 		release_obj(intr_event_source);
@@ -1181,7 +1220,7 @@ bool eu_philjordan_virtio_net::enablePartial()
 	uint32_t supported_features = dev_features &
 		(VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | (feature_checksum_offload ? (VIRTIO_NET_F_CSUM | VIRTIO_NET_F_HOST_TSO4) : 0));
 	configWriteLE32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31, supported_features);
-	IOLog("virtio-net enable(): Wrote driver-supported feature bits: 0x%08X\n", supported_features);
+	PJLogVerbose("virtio-net enable(): Wrote driver-supported feature bits: 0x%08X\n", supported_features);
 	
 	// tell device we're ready
 	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_DRIVER_OK);
