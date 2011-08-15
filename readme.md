@@ -1,5 +1,15 @@
 # Virtio-Net for Mac OS X
 
+## Latest release
+
+I have released version 0.9.2 (the third beta for the 1.0), which includes support
+for message signaled interrupts (they are not available on VirtualBox unfortunately),
+and offloaded checksumming and TCP segmentation for IPv4. Transmit speeds with TSO are
+now on par with receive speeds and easily outperform the emulated Intel gigabit
+adapter.
+
+Binaries (and the installer) are in the bin/ directory.
+
 ## Summary
 
 Some virtualisation software (I know of VirtualBox and Linux KVM/Qemu) implements
@@ -7,12 +17,9 @@ paravirtual hardware per the "virtio" specification. One type of virtio device
 is the "virtio-net" ethernet adapter. Linux and Windows guest drivers exist for
 it, but as far as I know, this is the first such driver for Mac OS X (10.5+).
 
-In an extremely unscientific benchmark of reading a 570MB file from the host
-(Mac OS X 10.6.8, MacBook Air, VirtualBox 4.1.0) on the guest (Mac OS X 10.6.8)
-via AFP file sharing, the virtio-net
-device with this driver seems to beat the usual emulated Intel Gigabit ethernet
-adapter at 42 seconds (cold cache) or 33 seconds (warm cache) on virtio-net to
-44 seconds (warm cache) on the Intel adapter.
+Compared to the default emulated Intel gigabit device, the paravirtualised adapter
+is approximately twice as fast at transmitting TCP data (with TSO), and about 4
+times as fast at receiving.
 
 Kernel debugging via gdb is now also supported by this driver. If the virtio-net
 device is the primary network adapter in the system (and the driver is the first
@@ -61,27 +68,32 @@ priority but seems to be pretty good so far nevertheless.
 
 Receiving and transmitting packets works, the adapter is able to negotiate DHCP,
 send and receive pings, handle TCP connections, etc. The driver appears to be
-stable even when saturating the virtual network's bandwidth, although I have not
-performed any systematic or longer term tests.
+stable even when saturating the virtual network's bandwidth. Some benchmarks
+are in the docs/ directory, although these predate TSO support, which has
+almost doubled transmit speed in VirtualBox on my Core2Duo MacBook Air.
 
 Startup and shutdown appear to work fine, as do disabling and re-enabling the
 device in Network Preferences and changing the adapter's configuration on the
 host side.
 
 The driver detects link status changes and correctly communicates it to the
-operating system. If you untick "cable connected" in the VirtualBox GUI for the
+operating system. This means that if you untick "cable connected" in the VirtualBox GUI for the
 network device, the adapter's dot in the guest's Network Preferences turns red,
-and back to green/yellow when you tick it.
+and back to green/yellow when you tick it. If you change the adapter's "wiring"
+(bridging, NAT, host-only, etc.) this is communicated as a brief status change
+which triggers a DHCP renew, as you'd want.
 
-No advanced features offered by the "hardware" are currently supported by the
-driver. This includes checksum offloading, automatic fragmentation and reassembly
+The "hardware" offers various advanced features, depending on implementation.
+Of those, this driver supports checksum offloading and automatic segmentation
+(TSO) for TCP on IPv4.
+
+Reassembly
 of large packets, MAC address filtering/promiscuous mode, VLAN filtering, etc.
-Support may be added at a later date (patches welcome!).
+are not implemented. Support may be added at a later date (patches welcome!).
 
 ## Next Steps
 
-We should probably gather network statistics and fix reporting link status
-changes to the system.
+We should probably gather network statistics.
 
 Error handling should be double-checked, and correct operation on `disable()` and
 subsequent re-`enable()` should be verified. Correct freeing of all resources
@@ -91,11 +103,7 @@ Currently, some
 data coming from the device is blindly trusted. This isn't a big deal - if
 we can't trust the VM container, we can't trust anything at all. Still, it would
 be nice to avoid kernel panics or infinite loops on buggy virtio device
-implementations.
-
-Finally, there are many other optimisation opportunities, some easier to
-implement than others. Some involve using optional device features, which means
-using multiple different code paths.
+implementations, or in case of driver bugs.
 
 I don't know if you can run Mac OS X on any other virtual machine containers
 that support virtio network adapters, buf if you can, it would be nice to know
@@ -118,12 +126,10 @@ right. Under the proposed scheme, it would look something like this:
 
 Other types of virtio devices would likewise attach to the `VirtioPCIDriver`.
 
-## Binaries
+## Compiling
 
-I will make an official 1.0 release of the driver after some more tests and will
-release binaries then.
-
-Until then, you'll need to compile it yourself. This repository contains
+If you simply want to use the driver, just use the installer. For compiling it
+yourself, this repository contains
 an XCode 4 project with which the KEXT can be built in a single step. The KEXT
 should work on versions 10.5 (Leopard) through 10.7 (Lion), but so far has only
 been tested on Snow Leopard. Since XCode 4 only runs on Snow Leopard and up,
