@@ -1852,7 +1852,10 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 		getChecksumDemand(packet_mbuf, kChecksumFamilyTCPIP, &demand_mask);
 		if (demand_mask != 0 && demand_mask != kChecksumTCP)
 		{
-			IOLog("virtio-net addPacketToQueue(): Warning! Checksum demand mask is %08lX\n", demand_mask);
+			static bool has_warned_bad_demand_mask = false;
+			if (!has_warned_bad_demand_mask)
+				IOLog("virtio-net addPacketToQueue(): Warning! Checksum demand mask is %08X\n", (uint32_t)demand_mask);
+			has_warned_bad_demand_mask = true;
 		}
 		if (demand_mask & kChecksumTCP)
 		{
@@ -1902,12 +1905,12 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 	// We shouldn't limit large (TSO) packets too much as they'll cross page boundaries, though
 	if (requested_tsov4)
 	{
-		uint32_t packet_len = 0;
+		size_t packet_len = 0;
 		uint32_t num_segments = 0;
 		mbuf_t mb = packet_mbuf;
 		while (mb)
 		{
-			uint32_t len = mbuf_len(mb);
+			size_t len = mbuf_len(mb);
 			if (len > 0)
 				++num_segments;
 			packet_len += len;
@@ -1915,7 +1918,7 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 		}
 		if (packet_len > 65550)
 		{
-			kprintf("virtio-net addPacketToQueue(): packet with length %u encountered, this is probably too big.\n", packet_len);
+			kprintf("virtio-net addPacketToQueue(): packet with length %lu encountered, this is probably too big.\n", packet_len);
 			return kIOReturnError;
 		}
 		if (num_segments > max_segs) // it usually will be...
