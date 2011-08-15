@@ -149,6 +149,9 @@ public:
 	virtual bool configureInterface(IONetworkInterface *netif);
 	virtual IOReturn getPacketFilters(const OSSymbol *group, UInt32 *filters) const;
 	
+	virtual UInt32 getFeatures() const;	
+	virtual IOReturn getChecksumSupport(UInt32 *checksumMask, UInt32 checksumFamily, bool isOutput); 
+	
 	virtual IOReturn selectMedium(const IONetworkMedium* medium);
 protected:
 	/// Enable the device far enough to do debugging
@@ -258,7 +261,7 @@ protected:
 	 * as necessary. Returns true on success, false on failure. The mbuf is not
 	 * freed in either case (but referenced as a buffer in case of success).
 	 */
-	bool addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx);
+	IOReturn addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx);
 	IOBufferMemoryDescriptor* allocPacketHeaderBuffer();
 	/// Segment output function for the memory cursor, adds a physical memory segment to the buffer descriptor chain
 	static void outputPacketSegment(IOMemoryCursor::PhysicalSegment segment, void* segments, UInt32 segmentIndex);
@@ -305,7 +308,12 @@ protected:
 	
 	// Settings from the info.plist personality section (set in init())
 	/// Maximum number of physical data sections in a transmit packet
-	uint16_t max_tx_data_segs;
+	uint16_t pref_max_tx_data_segs;
+	static const uint16_t pref_max_tx_data_segs_default = 1;
+	
+	/// Whether or not the driver is permitted to negotiate any checksumming or offloading features
+	bool pref_allow_offloading;
+	static const bool pref_allow_offloading_default = true;
 	
 	/// The provider device. NOT retained.
 	IOPCIDevice* pci_dev;
@@ -337,8 +345,11 @@ protected:
 	
 	/// true if the device supports the VIRTIO_F_NOTIFY_ON_EMPTY feature
 	bool feature_notify_on_empty;
-	/// Low bit is atomically toggled on if the configuration change bit was detected in the interrupt handler
-	volatile UInt8 received_config_change;
+	/// Checksum offloading has been negotiated
+	bool feature_checksum_offload;
+	/// TSO for IPv4 has been negotiated
+	bool feature_tso_v4;
+	
 	
 	IOWorkLoop* work_loop;
 	IOFilterInterruptEventSource* intr_event_source;
@@ -357,6 +368,9 @@ protected:
 	struct virtio_net_packet* transmit_packets_to_free;
 	
 	bool was_stalled;
+
+	/// Low bit is atomically toggled on if the configuration change bit was detected in the interrupt handler
+	volatile UInt8 received_config_change __attribute__((aligned(32)));
 };
 
 #endif

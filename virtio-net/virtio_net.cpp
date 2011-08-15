@@ -77,6 +77,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <IOKit/network/IOGatedOutputQueue.h>
 #include <IOKit/network/IOMbufMemoryCursor.h>
 #include <IOKit/IOFilterInterruptEventSource.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+#include <net/ethernet.h>
 
 // darwin doesn't have inttypes.h TODO: build an inttypes.h for the kernel
 #ifndef PRIuPTR
@@ -202,17 +205,28 @@ bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 	if (properties && ((max_tx_segments_val = OSDynamicCast(OSNumber, properties->getObject("PJVirtioMaxTransmitDataSegments")))))
 	{
 		if (max_tx_segments_val->unsigned64BitValue() > UINT16_MAX)
-			max_tx_data_segs = UINT16_MAX;
+			pref_max_tx_data_segs = UINT16_MAX;
 		else
-			max_tx_data_segs = max_tx_segments_val->unsigned64BitValue();
-		if (max_tx_data_segs < 1)
-			max_tx_data_segs = 1;
-		IOLog("virtio-net: Maximum number of transmit data segments set to %u\n", max_tx_data_segs);
+			pref_max_tx_data_segs = max_tx_segments_val->unsigned64BitValue();
+		if (pref_max_tx_data_segs < 1)
+			pref_max_tx_data_segs = 1;
+		IOLog("virtio-net: Maximum number of transmit data segments set to %u\n", pref_max_tx_data_segs);
 	}
 	else
 	{
-		IOLog("virtio-net: Maximum number of transmit data segments defaulted to %u\n", 3);
-		max_tx_data_segs = 3;
+		pref_max_tx_data_segs = pref_max_tx_data_segs_default;
+		IOLog("virtio-net: Maximum number of transmit data segments defaulted to %u\n", pref_max_tx_data_segs);
+	}
+	
+	OSBoolean* allow_offloading_val = NULL;
+	if (properties && ((allow_offloading_val = OSDynamicCast(OSBoolean, properties->getObject("PJVirtioNetAllowOffloading")))))
+	{
+		pref_allow_offloading = allow_offloading_val->getValue();
+		IOLog("virtio-net: Offloading checksumming and segmentation %sALLOWED by plist preferences.\n", pref_allow_offloading ? "" : "DIS");
+	}
+	else
+	{
+		pref_allow_offloading = pref_allow_offloading_default;
 	}
 	//virtio_net_log_property_dict(properties);
 	
@@ -395,7 +409,7 @@ struct virtio_net_config
 
 #define VIRTIO_NET_HDR_F_NEEDS_CSUM 1
 #define VIRTIO_NET_HDR_GSO_NONE 0 
-#define VIRTIO_NET_HDR_GSO_TCPV4 2
+#define VIRTIO_NET_HDR_GSO_TCPV4 1
 #define VIRTIO_NET_HDR_GSO_UDP 3
 #define VIRTIO_NET_HDR_GSO_TCPV6 4
 #define VIRTIO_NET_HDR_GSO_ECN 0x80
@@ -761,6 +775,13 @@ uint16_t eu_philjordan_virtio_net::virtioReadOptionalConfigFieldsGetDeviceSpecif
 	return config_offset;
 }
 
+UInt32 eu_philjordan_virtio_net::getFeatures() const
+{
+	if (driver_state == kDriverStateInitial)
+		IOLog("virtio-net getFeatures(): Warning! System asked about driver features before they could be detected.\n");
+	return (feature_tso_v4 ? kIONetworkFeatureTSOIPv4 : 0);
+}
+
 bool eu_philjordan_virtio_net::start(IOService* provider)
 {
 	PJLogVerbose("virtio-net start(%p)\n", provider);
@@ -822,15 +843,21 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	// We can use the notify-on-empty feature to permanently disable transmission interrupts
 	feature_notify_on_empty = (0 != (dev_features & VIRTIO_F_NOTIFY_ON_EMPTY));
 	
-	#warning TODO
-#if 0
-	feature_checksum_offload = (0 != (dev_features & VIRTIO_NET_F_CSUM));
+	/* If supported, enable checksum offloading and IPv4 TCP segmentation, as this
+	 * is necessary to enable TSO - we won't actually use the checksum offload
+	 * mechanism itself as OSX won't provide us with a partial checksum for the
+	 * pseudo header.
+	 */
+	feature_checksum_offload = false;
 	feature_tso_v4 = false;
-	if (feature_checksum_offload)
+	if (pref_allow_offloading)
 	{
-		feature_tso_v4 = (0 != (dev_features & VIRTIO_NET_F_HOST_TSO4));
+		feature_checksum_offload = (0 != (dev_features & VIRTIO_NET_F_CSUM));
+		if (feature_checksum_offload)
+		{
+			feature_tso_v4 = (0 != (dev_features & VIRTIO_NET_F_HOST_TSO4));
+		}
 	}
-#endif
 
 	size_t device_specific_offset = virtioReadOptionalConfigFieldsGetDeviceSpecificOffset();
 	
@@ -1152,9 +1179,9 @@ bool eu_philjordan_virtio_net::enablePartial()
 			
 	// write back supported features
 	uint32_t supported_features = dev_features &
-		(VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS);
+		(VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | (feature_checksum_offload ? (VIRTIO_NET_F_CSUM | VIRTIO_NET_F_HOST_TSO4) : 0));
 	configWriteLE32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31, supported_features);
-	PJLogVerbose("virtio-net enable(): Wrote driver-supported feature bits: 0x%08X\n", supported_features);
+	IOLog("virtio-net enable(): Wrote driver-supported feature bits: 0x%08X\n", supported_features);
 	
 	// tell device we're ready
 	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_DRIVER_OK);
@@ -1405,14 +1432,28 @@ void eu_philjordan_virtio_net::disablePartial()
 
 UInt32 eu_philjordan_virtio_net::outputPacket(mbuf_t buffer, void *param)
 {
+	// try to clear any completed packets from the queue
+	runInCommandGate<bool, &eu_philjordan_virtio_net::releaseSentPackets>(false);
+
 	if (tx_queue.num_free_desc < 3)
 	{
-		//IOLog("virtio-net outputPacket(): Transmit queue full, trying to free up some descriptors...\n");
-		runInCommandGate<bool, &eu_philjordan_virtio_net::releaseSentPackets>(false);
-		if (tx_queue.num_free_desc < 3)
+		//IOLog("virtio-net outputPacket(): Transmit queue really full, pipeline stalled.\n");
+		// activate interrupt for when a packet is sent if we're currently only being notified when empty
+		if (feature_notify_on_empty)
 		{
-			//IOLog("virtio-net outputPacket(): Transmit queue really full, pipeline stalled.\n");
-			// activate interrupt for when a packet is sent if we're currently only being notified when empty
+			tx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
+			OSSynchronizeIO();
+		}
+		was_stalled = true;
+		return kIOReturnOutputStall;
+	}
+			
+	uint16_t avail_idx = tx_queue.avail->idx;
+	IOReturn add_ret = addPacketToQueue(buffer, tx_queue, false /* packet to be read by device */, avail_idx);
+	if (add_ret != kIOReturnSuccess)
+	{
+		if (add_ret == kIOReturnOutputStall)
+		{
 			if (feature_notify_on_empty)
 			{
 				tx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
@@ -1421,19 +1462,7 @@ UInt32 eu_philjordan_virtio_net::outputPacket(mbuf_t buffer, void *param)
 			was_stalled = true;
 			return kIOReturnOutputStall;
 		}
-	}
-		
-	if (mbuf_len(buffer) > kIOEthernetMaxPacketSize)
-	{
-		IOLog("virtio-net outputPacket(): dropped oversized packet of length %lu\n", mbuf_len(buffer));
-		freePacket(buffer);
-		return kIOReturnOutputDropped;
-	}
-	
-	uint16_t avail_idx = tx_queue.avail->idx;
-	if (!addPacketToQueue(buffer, tx_queue, false /* packet to be read by device */, avail_idx))
-	{
-		IOLog("virtio-net outputPacket(): failed to add packet (length: %lu) to queue, dropping it.\n", mbuf_len(buffer));
+		kprintf("virtio-net outputPacket(): failed to add packet (length: %lu, return value %X) to queue, dropping it.\n", mbuf_len(buffer), add_ret);
 		freePacket(buffer);
 		return kIOReturnOutputDropped;
 	}
@@ -1496,6 +1525,16 @@ void eu_philjordan_virtio_net::receivePacket(void *pkt, UInt32 *pktSize, UInt32 
 
 static void vring_push_free_desc(virtio_net_virtqueue& queue, uint16_t free_idx);
 static int32_t vring_pop_free_desc(virtio_net_virtqueue& queue);
+
+IOReturn eu_philjordan_virtio_net::getChecksumSupport(UInt32 *checksumMask, UInt32 checksumFamily, bool isOutput)
+{
+	*checksumMask = 0;
+	if (checksumFamily != kChecksumFamilyTCPIP)
+		return kIOReturnUnsupported;
+	if (feature_checksum_offload)
+		*checksumMask = kChecksumTCP;
+	return kIOReturnSuccess;
+}
 
 void eu_philjordan_virtio_net::sendPacket(void *pkt, UInt32 pktSize)
 {
@@ -1621,11 +1660,14 @@ struct virtio_net_cursor_segment_context
 	/// Bits to OR into the buffer's "flags" field to indicate reading or writing
 	uint8_t buffer_direction_flag;
 	
+	uint32_t total_len;
+	
 	/// A problem has occurred, further outputPacketSegment() calls will not do anything except increment the segment counter
 	bool error;
 	/// The error was that descriptor allocation failed
 	bool out_of_descriptors;
 	
+	unsigned descs_allocd;
 };
 void eu_philjordan_virtio_net::outputPacketSegment(IOMemoryCursor::PhysicalSegment segment, void* segment_context, UInt32 segmentIndex)
 {
@@ -1645,13 +1687,21 @@ void eu_philjordan_virtio_net::outputPacketSegment(IOMemoryCursor::PhysicalSegme
 	
 	int32_t desc = ctx->descs[segmentIndex];
 	if (desc < 0)
+	{
 		desc = vring_pop_free_desc(ctx->queue);
+		++ctx->descs_allocd;
+	}
+	else
+	{
+		ctx->total_len -= ctx->queue.desc[desc].len;
+	}
 	/*else
 		IOLog("virtio-net outputPacketSegment(): Note: rewriting descriptor %u! Prev addr: %llu len: %u, now addr: %lu, len: %lu\n",
 			desc, ctx->queue.desc[desc].addr, ctx->queue.desc[desc].len, segment.location, segment.length);
 	*/
 	if (desc < 0)
 	{
+		--ctx->descs_allocd;
 		IOLog("virtio-net outputPacketSegment(): failed to allocate descriptor.\n");
 		ctx->error = ctx->out_of_descriptors = true;
 		return;
@@ -1661,6 +1711,7 @@ void eu_philjordan_virtio_net::outputPacketSegment(IOMemoryCursor::PhysicalSegme
 	vring_desc& buf = ctx->queue.desc[desc];
 	buf.addr = segment.location;
 	buf.len = static_cast<uint32_t>(segment.length);
+	ctx->total_len += buf.len;
 	buf.flags = ctx->buffer_direction_flag;
 	buf.next = UINT16_MAX;
 	if ((int32_t)segmentIndex > ctx->max_segment_created)
@@ -1685,21 +1736,209 @@ IOBufferMemoryDescriptor* eu_philjordan_virtio_net::allocPacketHeaderBuffer()
 	return packet_mem;
 }
 
-bool eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx)
+static void virtio_net_enable_tcp_csum(virtio_net_packet* packet, bool need_partial, mbuf_t packet_mbuf, uint16_t ip_hdr_len, struct ip* ip_hdr)
 {
+	// calculate the pseudo-header checksum (this will be extended by the data checksum by the "hardware")
+	char* ip_start = reinterpret_cast<char*>(ip_hdr);
+	struct tcphdr* tcp_hdr = reinterpret_cast<struct tcphdr*>(ip_start + ip_hdr_len);
+	if (need_partial)
+	{
+			unsigned ip_len = ntohs(ip_hdr->ip_len);
+			unsigned tcp_len = ip_len - ip_hdr_len;
+			uint32_t csum_l = 0;
+			union
+			{
+				uint32_t l;
+				uint16_t s[2];
+			} tmp;
+			
+			tmp.l = ip_hdr->ip_src.s_addr;
+			csum_l += tmp.s[0];
+			csum_l += tmp.s[1];
+			
+			tmp.l = ip_hdr->ip_dst.s_addr;
+			csum_l += tmp.s[0];
+			csum_l += tmp.s[1];
+			
+			csum_l += htons(ip_hdr->ip_p);
+			csum_l += htons(tcp_len & 0xffff);
+			
+			csum_l = (csum_l & 0xffff) + (csum_l >> 16);
+			
+			uint16_t csum = (csum_l & 0xffff) + (csum_l >> 16);
+			
+			tcp_hdr->th_sum = csum;
+		}
+		else
+		{
+			tcp_hdr->th_sum = 0;
+		}
+
+			
+			if (ip_hdr->ip_v != 4)
+			{
+				IOLog("Warning! IP header says version %u, expected 4 for IPv4!\n", ip_hdr->ip_v);
+			}
+			if (ip_hdr->ip_p != 6)
+			{
+				IOLog("Warning! IP header refers to protocol %u, expected 6 for TCP!\n", ip_hdr->ip_p);
+			}
+			
+			packet->header.flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+			packet->header.csum_start = ETHER_HDR_LEN + ip_hdr_len;
+			packet->header.csum_offset = 16;
+}
+
+/* returns kIOReturnOutputStall if there aren't enough descriptors,
+ * kIOReturnSuccess if everything went well, kIOReturnNoMemory if alloc failed,
+ * and kIOReturnError if something else went wrong.
+ */
+IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx)
+{
+	// check if there are going to be enough descriptors around
+	if (queue.num_free_desc < 2)
+		return kIOReturnOutputStall;
+
+	// when transmitting, we may want to request specific "hardware" features
+	bool requested_tcp_csum = false;
+	bool requested_tsov4 = false;
+	bool requested_udp_csum = false;
+	mbuf_csum_request_flags_t tso_req = 0;
+	uint32_t tso_val = 0;
+
+	if (!for_writing && feature_checksum_offload)
+	{
+		// deal with any checksum offloading requests
+		UInt32 demand_mask = 0;
+		getChecksumDemand(packet_mbuf, kChecksumFamilyTCPIP, &demand_mask);
+		if (demand_mask != 0 && demand_mask != kChecksumTCP)
+		{
+			IOLog("virtio-net addPacketToQueue(): Warning! Checksum demand mask is %08lX\n", demand_mask);
+		}
+		if (demand_mask & kChecksumTCP)
+		{
+			requested_tcp_csum = true;
+		}
+		
+		if (feature_tso_v4)
+		{
+			// may need to handle tso
+			errno_t tso_err = mbuf_get_tso_requested(packet_mbuf, &tso_req, &tso_val);
+			if (tso_err != 0)
+			{
+				static bool has_had_tso_err = false;
+				if (!has_had_tso_err)
+				{
+					has_had_tso_err = true;
+					IOLog("virtio-net addPacketToQueue(): mbuf_get_tso_requested() returned %d\n", tso_err);
+				}
+			}
+			else if (tso_req != 0)
+			{
+				static bool has_had_tso_req_err = false;
+				if (0 != (tso_req & ~(MBUF_TSO_IPV4 | MBUF_TSO_IPV6)) && !has_had_tso_req_err)
+				{
+					IOLog("virtio-net addPacketToQueue(): Warning! mbuf_get_tso_requested() unknown TSO bitfield %08X.\n", tso_req);
+					has_had_tso_req_err = true;
+				}
+				tso_req &= (MBUF_TSO_IPV4 | MBUF_TSO_IPV6);
+
+				if (tso_req == MBUF_TSO_IPV4)
+				{
+					requested_tsov4 = true;
+				}
+				else
+				{
+					static bool has_had_tso6 = false;
+					//if (!has_had_tso6)
+						IOLog("virtio-net addPacketToQueue(): Warning! mbuf_get_tso_requested() requested unexpected TCPv6 TSO: %08X\n", tso_req);
+					has_had_tso6 = true;
+				}
+			}
+		}
+	}
+
+	// compact small packets more if descriptors are getting scarce
+	uint32_t max_segs = min(pref_max_tx_data_segs, queue.num_free_desc - 1); // subtracted 1 off for the virtio net header
+	// We shouldn't limit large (TSO) packets too much as they'll cross page boundaries, though
+	if (requested_tsov4)
+	{
+		uint32_t packet_len = 0;
+		uint32_t num_segments = 0;
+		mbuf_t mb = packet_mbuf;
+		while (mb)
+		{
+			uint32_t len = mbuf_len(mb);
+			if (len > 0)
+				++num_segments;
+			packet_len += len;
+			mb = mbuf_next(mb);
+		}
+		if (packet_len > 65550)
+		{
+			kprintf("virtio-net addPacketToQueue(): packet with length %u encountered, this is probably too big.\n", packet_len);
+			return kIOReturnError;
+		}
+		if (num_segments > max_segs) // it usually will be...
+		{
+			if (num_segments >= queue.num_free_desc) // >= not > because we need a buffer for the virtio header
+			{
+				return kIOReturnOutputStall;
+			}
+			max_segs = num_segments;
+		}
+	}
+
 	// recycle or allocate memory for the packet virtio header buffer
 	IOBufferMemoryDescriptor* packet_mem = allocPacketHeaderBuffer();
 	if (!packet_mem)
-		return false;
+		return kIOReturnNoMemory;
 	virtio_net_packet* packet = static_cast<virtio_net_packet*>(packet_mem->getBytesNoCopy());
 
 	packet->mbuf = packet_mbuf;
 	packet->mem = packet_mem;
+	
+	size_t head_len = mbuf_len(packet_mbuf);
+
+	// initialise the packet buffer header
+	packet->header.flags = 0;
+	packet->header.csum_start = 0;
+	packet->header.csum_offset = 0;
+	packet->header.gso_type = VIRTIO_NET_HDR_GSO_NONE;
+	packet->header.hdr_len = 0;
+	packet->header.gso_size = 0;
+	
+	
+	struct ip* ip_hdr = NULL;
+	unsigned ip_hdr_len = 0;
+	if (requested_tcp_csum || requested_tsov4 || requested_udp_csum)
+	{
+		void* hdr_data = mbuf_data(packet_mbuf);
+		char* ip_start = static_cast<char*>(hdr_data) + ETHER_HDR_LEN;
+		ip_hdr = reinterpret_cast<struct ip*>(ip_start);
+		ip_hdr_len = ip_hdr->ip_hl * 4;
+	}
+	
+	if (requested_tsov4 && !requested_tcp_csum)
+	{
+		// force checksum offloading if TSO is active, as each segment will need its own checksum
+		requested_tcp_csum = true;
+	}
+	if (requested_tcp_csum)
+	{
+		// write the appropriate fields to activate checksumming and calculate pseudo-header partial checksum if needed
+		virtio_net_enable_tcp_csum(
+			packet,
+			!requested_tsov4, //Partial checksum needed only for non-TSO packets
+			packet_mbuf, ip_hdr_len, ip_hdr);
+	}
+	
+
 
 	// get the necessary descriptor for the head
 	const int32_t head_desc = vring_pop_free_desc(queue);
 	if (head_desc < 0)
-		return release_obj(packet_mem), false;
+		return release_obj(packet_mem), kIOReturnOutputStall;
 
 	// set up the header buffer descriptor
 	const uint16_t direction_flag = for_writing ? VRING_DESC_F_WRITE : 0;
@@ -1710,25 +1949,24 @@ bool eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_v
 	head_buf.flags = direction_flag;
 	head_buf.next = 0;
 	
-	//IOLog("virtio-net addPacketToQueue(): begin generating physical segments.\n");
-	// Any more than 3 is just wasteful
-	uint32_t max_segs = min(max_tx_data_segs, queue.num_free_desc);
+	// array for the allocated descriptors, -1 = not yet allocated
 	int32_t descs[max_segs];
 	for (unsigned i = 0; i < max_segs; ++i)
 		descs[i] = -1;
 
 	struct virtio_net_cursor_segment_context segment_context = {
-		this, queue, descs, max_segs, -1, direction_flag, false, false
+		this, queue, descs, max_segs, -1, direction_flag, 0, false, false, 0
 	};
 	
 	uint32_t segments = packet_memory_cursor->genPhysicalSegments(
-		packet_mbuf, &segment_context, max_segs, true /* coalesce if necessary */);
+		packet_mbuf, &segment_context, max_segs, !requested_tsov4 /* coalesce short packets */);
 	if (segments == 0 || segment_context.error)
 	{
-		IOLog("virtio-net addPacketToQueue(): an error occurred. %u segments produced, "
-			"max index: %d, error: %s, out of descriptors: %s.\n",
+		kprintf("virtio-net addPacketToQueue(): an error occurred. %u segments produced, "
+			"max index: %d, error: %s, out of descriptors: %s, total length so far %u, descriptors allocated: %u, max segments: %u, free descriptors: %u.\n",
 			segments, segment_context.max_segment_created,
-			segment_context.error ? "yes" : "no", segment_context.out_of_descriptors ? "yes" : "no");
+			segment_context.error ? "yes" : "no", segment_context.out_of_descriptors ? "yes" : "no", segment_context.total_len,
+			segment_context.descs_allocd, max_segs, queue.num_free_desc);
 		for (unsigned i = 0; i < max_segs; ++i)
 		{
 			if (descs[i] >= 0)
@@ -1737,8 +1975,10 @@ bool eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_v
 			}
 		}
 		
+		vring_push_free_desc(queue, head_desc);
+		
 		release_obj(packet_mem);
-		return false;
+		return segment_context.out_of_descriptors ? kIOReturnOutputStall : kIOReturnError;
 	}
 	
 	if (segments != segment_context.max_segment_created + 1)
@@ -1758,23 +1998,61 @@ bool eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_v
 		queue.desc[prev].flags |= VRING_DESC_F_NEXT;
 		prev = descs[i];
 	}
-	
-	// initialise the network header
-	packet->header.flags = 0;
-	packet->header.gso_type = VIRTIO_NET_HDR_GSO_NONE;
-	packet->header.hdr_len = 0;
-	packet->header.gso_size = 0;
-	packet->header.csum_start = 0;
-	packet->header.csum_offset = 0;
 
-	// ensure we can find it again
+	// finally, request TSO if necessary
+	if (requested_tsov4)
+	{
+		//IOLog("virtio-net addPacketToQueue(): TSO4 packet.\n");
+		static unsigned tso_packets = 0;
+		static unsigned tso4_packets = 0;
+		tso_packets++;
+				
+				
+		++tso4_packets;
+		packet->header.gso_type = VIRTIO_NET_HDR_GSO_TCPV4;
+		int max_head_len = kIOEthernetMaxPacketSize - kIOEthernetCRCSize - tso_val;
+		if (max_head_len >= 14 + 20 + 20) /* ethernet + IP + TCP */
+		{
+			if (head_len != max_head_len)
+			{
+				IOLog("virtio-net addPacketToQueue(): Warning! head mbuf %lu does not match mtu-seg %d\n", head_len, max_head_len);
+			}
+		}
+		packet->header.hdr_len = head_len; // not sure if this is right...
+		packet->header.gso_size = tso_val;
+#if 0				
+				if (tso_packets % 100 == 1)
+				{
+					IOLog("virtio-net addPacketToQueue: %u TSO (%u TSO4) packets processed, current packet's length %u, segment size %u, ethernet+ip hdr len %u, total header len %lu, %u segments.\n",
+						tso_packets, tso4_packets, segment_context.total_len, packet->header.gso_size, packet->header.hdr_len, head_len, segments);
+//#if 0
+					uint16_t desc = head_desc;
+					while (true)
+					{
+						// TODO: Defend against infinite loop (out of range descriptors, circular lists)
+						/* note that lacking any driver bugs, this will only defend against a
+						 * buggy/malicious hypervisor, which is like fighting windmills.
+						 */
+						IOLog("virtio-net addPacketToQueue(): used buffer %u: length %u.\n",
+							desc, tx_queue.desc[desc].len, packet);
+						if (0 == (tx_queue.desc[desc].flags & VRING_DESC_F_NEXT))
+							break;
+						desc = tx_queue.desc[desc].next;
+					}
+//#endif
+				}
+#endif		
+	}
+
+	
+	// ensure we can find the packet again
 	queue.packets_for_descs[head_desc] = packet;
 	
 	// add the chain to the available ring
 	queue.avail->ring[at_avail_idx % queue.num] = head_desc;
 	++at_avail_idx;
 	
-	return true;
+	return kIOReturnSuccess;
 }
 
 /// Fill the receive queue with buffers for the first time and make them available to the device
@@ -1814,7 +2092,8 @@ bool eu_philjordan_virtio_net::populateReceiveBuffers()
 		}
 		
 		// this will increment avail_idx if successful
-		if (!addPacketToQueue(packet_mbuf, rx_queue, true /* packet is writeable */, avail_idx))
+		IOReturn add_ret = addPacketToQueue(packet_mbuf, rx_queue, true /* packet is writeable */, avail_idx);
+		if (add_ret != kIOReturnSuccess)
 		{
 			static int add_fail_count = 0;
 			if (add_fail_count % 10 == 0 && add_fail_count < 100)
@@ -1922,6 +2201,7 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 			IOLog("virtio-net releaseSentPackets(): warning, used transmit buffer chain without matching packet reported. Probably leaking memory.\n");
 			IOLog("virtio-net releaseSentPackets(): tx queue used element: desc %u, length %u\n", used.id, used.len);
 			uint16_t desc = used_desc;
+			uint16_t desc2 = used_desc;
 			while (true)
 			{
 				// TODO: Defend against infinite loop (out of range descriptors, circular lists)
@@ -1929,10 +2209,20 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 				 * buggy/malicious hypervisor, which is like fighting windmills.
 				 */
 				IOLog("virtio-net releaseSentPackets(): used buffer %u: length %u, associated packet: %p\n",
-					desc, tx_queue.desc[desc].len, packet);
-				if (0 == (tx_queue.desc[desc].flags & VRING_DESC_F_NEXT))
+					desc2, tx_queue.desc[desc2].len, packet);
+				if (desc2 >= tx_queue.num || 0 == (tx_queue.desc[desc2].flags & VRING_DESC_F_NEXT))
 					break;
+				desc2 = tx_queue.desc[desc2].next;
+				if (desc == desc2)
+					break;
+				IOLog("virtio-net releaseSentPackets(): used buffer %u: length %u, associated packet: %p\n",
+					desc2, tx_queue.desc[desc2].len, packet);
+				if (desc2 >= tx_queue.num || 0 == (tx_queue.desc[desc2].flags & VRING_DESC_F_NEXT))
+					break;
+				desc2 = tx_queue.desc[desc2].next;
 				desc = tx_queue.desc[desc].next;
+				if (desc == desc2)
+					break;
 			}
 		}
 		
