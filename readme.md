@@ -1,8 +1,43 @@
 # Virtio-Net for Mac OS X
 
+## What's this about?
+
+Some virtualisation environments, namely Linux KVM/Qemu and VirtualBox support
+high-performance paravirtualised devices that follow the "Virtio" specification.
+This is a driver for using the virtio ethernet device from OS X guests.
+
+## News
+
+Version 0.9.2 was released over one and a half years ago, and I haven't made any
+updates since, as it has worked fine.
+However, as I am now (March 2013) also using KVM, I'm strongly considering implementing drivers
+for more devices in the Virtio family and beyond. Of particular interest are:
+
+ * **Memory Balloon** - For dynamically varying the amount of memory assigned to the virtual machine.
+ * **Console** - Of interest to kernel developers: I'm hoping to get `kprintf()` output working via the virsh console.
+ * **Disk Storage** - Currently, you have to use an emulated AHCI device for OS X VM
+disks. The virtio storage device should reduce the overhead and potentially offer
+some advanced features such as Discard ("TRIM") which is useful for VM image files
+as well as SSDs. The virtio SCSI device even supports hotplugging.
+ * **SPICE/qxl virtualised graphics adapter and desktop integration** - Implementing a driver for this will
+offer better desktop integration (native mouse cursor and resizeable VM window)
+and eventually, it might offer better graphics performance, clipboard integration,
+etc.
+ * **9P** - This is for sharing parts of the host's file system with the guest OS.
+ * **Network** - The virtio-net implementation in KVM is much higher performance
+and supports more features than VirtualBox's. This driver currently doesn't even 
+
+Some of this will eventually get done if I fund development myself. But if you
+have an interest in a particular feature, I'm available for funded development,
+and source code contributions are always welcome.
+
+With that in mind, the next step is modularising the existing code by splitting
+the virtqueues and PCI device initialisation from the network-specific code so
+that the other drivers can be built upon the virtqueues.
+
 ## Latest release
 
-I have released version 0.9.2 (the third beta for the 1.0), which includes support
+The current release is version 0.9.2 (the third beta for the 1.0), which includes support
 for message signaled interrupts (they are not available on VirtualBox unfortunately),
 and offloaded checksumming and TCP segmentation for IPv4. Transmit speeds with TSO are
 now on par with receive speeds and easily outperform the emulated Intel gigabit
@@ -10,15 +45,20 @@ adapter.
 
 Binaries (and the installer) are in the bin/ directory.
 
+Version 0.9.2 works with both the VirtualBox and Qemu/KVM implementations of the
+virtio network device, and is known to work with OS X 10.6 (Snow Leopard) through
+10.8.x (Mountain Lion), with both 32-bit and 64-bit kernels. Other versions may
+work, but have not been tested.
+
 ## Summary
 
 Some virtualisation software (I know of VirtualBox and Linux KVM/Qemu) implements
 paravirtual hardware per the "virtio" specification. One type of virtio device
 is the "virtio-net" ethernet adapter. Linux and Windows guest drivers exist for
-it, but as far as I know, this is the first such driver for Mac OS X (10.5+).
+it, but as far as I know, this is the only such driver for Mac OS X (10.5+).
 
 Compared to the default emulated Intel gigabit device, the paravirtualised adapter
-is approximately twice as fast at transmitting TCP data (with TSO), and about 4
+in VirtualBox is approximately twice as fast at transmitting TCP data (with TSO), and about 4
 times as fast at receiving.
 
 Kernel debugging via gdb is now also supported by this driver. If the virtio-net
@@ -47,7 +87,7 @@ opportunity for separating the responsibilities for implementing the virtual
 hardware and the drivers, and also potentially allows for greater guest
 portability across different virtualisation solution.
 
-The virtio spec (Version 0.9 as of this writing) includes a specification for a
+The virtio spec (Version 0.9.5 as of this writing) includes a specification for a
 virtualised PCI ethernet network card. Implementations for such virtual hardware
 are present in Linux' KVM virtualisation solution and also in newer versions of
 VirtualBox. Drivers for guests exist for Linux (in the main tree) and for
@@ -91,24 +131,6 @@ Reassembly
 of large packets, MAC address filtering/promiscuous mode, VLAN filtering, etc.
 are not implemented. Support may be added at a later date (patches welcome!).
 
-## Next Steps
-
-We should probably gather network statistics.
-
-Error handling should be double-checked, and correct operation on `disable()` and
-subsequent re-`enable()` should be verified. Correct freeing of all resources
-should also be verified.
-
-Currently, some
-data coming from the device is blindly trusted. This isn't a big deal - if
-we can't trust the VM container, we can't trust anything at all. Still, it would
-be nice to avoid kernel panics or infinite loops on buggy virtio device
-implementations, or in case of driver bugs.
-
-I don't know if you can run Mac OS X on any other virtual machine containers
-that support virtio network adapters, buf if you can, it would be nice to know
-if the driver works on those.
-
 ## Future refinements
 
 Longer term, if we wish to support other virtio devices, the PCI device handling
@@ -130,9 +152,11 @@ Other types of virtio devices would likewise attach to the `VirtioPCIDriver`.
 
 If you simply want to use the driver, just use the installer. For compiling it
 yourself, this repository contains
-an XCode 4 project with which the KEXT can be built in a single step. The KEXT
-should work on versions 10.5 (Leopard) through 10.7 (Lion), but so far has only
-been tested on Snow Leopard. Since XCode 4 only runs on Snow Leopard and up,
+an Xcode 4 project with which the KEXT can be built in a single step. The KEXT
+should work on versions 10.5 (Leopard) through 10.8 (Mountain Lion), but so
+far has only
+been tested on Snow Leopard and Mountain Lion. Since XCode 4 only runs on
+Snow Leopard and up,
 you'll need to create your own XCode 3 project if you want to compile it on
 Leopard.
 
