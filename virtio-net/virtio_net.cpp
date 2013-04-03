@@ -83,27 +83,29 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // darwin doesn't have inttypes.h TODO: build an inttypes.h for the kernel
 #ifndef PRIuPTR
-#define PRIuPTR "%lu"
+#define PRIuPTR "lu"
 #endif
 #ifndef PRIXPTR
-#define PRIXPTR "%lX"
+#define PRIXPTR "lX"
 #endif
 #ifndef PRIX64
-#define PRIX64 "%llX"
+#define PRIX64 "llX"
 #endif
 #ifndef PRId64
-#define PRId64 "%lld"
+#define PRId64 "lld"
 #endif
 
 OSDefineMetaClassAndStructors(eu_philjordan_virtio_net, IOEthernetController);
 #define super IOEthernetController
 
 //#define PJ_VIRTIO_NET_VERBOSE
+#define VIOLog kprintf
+
 
 #ifndef PJ_VIRTIO_NET_VERBOSE
 #define PJLogVerbose(...)
 #else
-#define PJLogVerbose(...) IOLog(__VA_ARGS__)
+#define PJLogVerbose(...) VIOLog(__VA_ARGS__)
 #endif
 
 template <typename T> static T* PJZMallocArray(size_t length)
@@ -143,7 +145,7 @@ static inline bool is_pow2(uint16_t num)
 
 static void virtio_net_log_property_dict(OSDictionary* props)
 {
-	IOLog("virtio-net: begin property dictionary:\n");
+	VIOLog("virtio-net: begin property dictionary:\n");
 	if (props)
 	{
 		OSCollectionIterator* it = OSCollectionIterator::withCollection(props);
@@ -160,25 +162,25 @@ static void virtio_net_log_property_dict(OSDictionary* props)
 				OSNumber* num = OSDynamicCast(OSNumber, val);
 				if (str)
 				{
-					IOLog("%s -> '%s'\n", keystr->getCStringNoCopy(), str->getCStringNoCopy());
+					VIOLog("%s -> '%s'\n", keystr->getCStringNoCopy(), str->getCStringNoCopy());
 				}
 				else if (num)
 				{
-					IOLog("%s -> %llu\n", keystr->getCStringNoCopy(), num->unsigned64BitValue());
+					VIOLog("%s -> %llu\n", keystr->getCStringNoCopy(), num->unsigned64BitValue());
 				}
 				else if (val)
 				{
-					IOLog("%s -> [%s]\n", keystr->getCStringNoCopy(), val->getMetaClass()->getClassName());
+					VIOLog("%s -> [%s]\n", keystr->getCStringNoCopy(), val->getMetaClass()->getClassName());
 				}
 				else
 				{
-					IOLog("%s -> null\n", keystr->getCStringNoCopy());
+					VIOLog("%s -> null\n", keystr->getCStringNoCopy());
 				}
 			}
 			it->release();
 		}
 	}
-	IOLog("virtio-net: end property dictionary\n");
+	VIOLog("virtio-net: end property dictionary\n");
 }
 
 bool eu_philjordan_virtio_net::init(OSDictionary* properties)
@@ -186,7 +188,7 @@ bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 	static bool has_shown_copyright_notice = false;
 	if (!has_shown_copyright_notice)
 	{
-		IOLog("virtio-net driver: Copyright 2011 Phil Jordan <phil@philjordan.eu>; all rights reserved.\n"
+		VIOLog("virtio-net driver: Copyright 2011 Phil Jordan <phil@philjordan.eu>; all rights reserved.\n"
 			"virtio specification and header: Copyright 2007, 2009, IBM Corporation and Copyright 2011, Red Hat, Inc; all rights reserved.\n"
 			"For details, see the LICENSE and readme.md files in virtio-net KEXT bundle.\n");
 		has_shown_copyright_notice = true;
@@ -206,19 +208,19 @@ bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 			pref_max_tx_data_segs = max_tx_segments_val->unsigned64BitValue();
 		if (pref_max_tx_data_segs < 1)
 			pref_max_tx_data_segs = 1;
-		IOLog("virtio-net: Maximum number of transmit data segments set to %u\n", pref_max_tx_data_segs);
+		VIOLog("virtio-net: Maximum number of transmit data segments set to %u\n", pref_max_tx_data_segs);
 	}
 	else
 	{
 		pref_max_tx_data_segs = pref_max_tx_data_segs_default;
-		IOLog("virtio-net: Maximum number of transmit data segments defaulted to %u\n", pref_max_tx_data_segs);
+		VIOLog("virtio-net: Maximum number of transmit data segments defaulted to %u\n", pref_max_tx_data_segs);
 	}
 	
 	OSBoolean* allow_offloading_val = NULL;
 	if (properties && ((allow_offloading_val = OSDynamicCast(OSBoolean, properties->getObject("PJVirtioNetAllowOffloading")))))
 	{
 		pref_allow_offloading = allow_offloading_val->getValue();
-		IOLog("virtio-net: Offloading checksumming and segmentation %sALLOWED by plist preferences.\n", pref_allow_offloading ? "" : "DIS");
+		VIOLog("virtio-net: Offloading checksumming and segmentation %sALLOWED by plist preferences.\n", pref_allow_offloading ? "" : "DIS");
 	}
 	else
 	{
@@ -236,7 +238,7 @@ bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 	packet_memory_cursor = new IOMbufMemoryCursor();
 	if (!packet_memory_cursor || !packet_memory_cursor->initWithSpecification(outputPacketSegment, UINT32_MAX, tx_queue.num - 1))
 	{
-		IOLog("virtio-net init(): Failed to %s memory cursor.\n", packet_memory_cursor ? "initialise" : "allocate");
+		VIOLog("virtio-net init(): Failed to %s memory cursor.\n", packet_memory_cursor ? "initialise" : "allocate");
 		OSSafeReleaseNULL(packet_memory_cursor);
 		return false;
 	}
@@ -274,7 +276,7 @@ IOService* eu_philjordan_virtio_net::probe(IOService* provider, SInt32* score)
 		return NULL;
 	
 	if (driver_state != kDriverStateInitial)
-		IOLog("virtio-net probe(): Warning: Unexpected driver state %d\n", driver_state);
+		VIOLog("virtio-net probe(): Warning: Unexpected driver state %d\n", driver_state);
 	
 	OSObject* vendor_id = pci_dev->getProperty("vendor-id");
 	OSObject* device_id = pci_dev->getProperty("device-id");
@@ -296,27 +298,27 @@ IOService* eu_philjordan_virtio_net::probe(IOService* provider, SInt32* score)
 		
 	if (vid != 0x1AF4)
 	{
-		IOLog("virtio-net probe(): Vendor ID does not match 0x1AF4, device unsupported.\n");
+		VIOLog("virtio-net probe(): Vendor ID does not match 0x1AF4, device unsupported.\n");
 		return NULL;
 	}
 	if (did < 0x1000 || did > 0x103F)
 	{
-		IOLog("virtio-net probe(): Device ID does not lie in the range 0x1000 to 0x103F (inclusive), device unsupported.\n");
+		VIOLog("virtio-net probe(): Device ID does not lie in the range 0x1000 to 0x103F (inclusive), device unsupported.\n");
 		return NULL;
 	}
 	if (revid != 0)
 	{
-		IOLog("virtio-net probe(): Only virtio devices with revision ID 0 are supported by this driver, this one has revision " PRId64 ".\n", revid);
+		VIOLog("virtio-net probe(): Only virtio devices with revision ID 0 are supported by this driver, this one has revision %" PRId64 ".\n", revid);
 		return NULL;
 	}
 	if (sub_id != 1)
 	{
-		IOLog("Subsystem ID for device is " PRId64 "Only virtio devices with subsystem ID 1 (= network card) are supported by this driver.\n", sub_id);
+		VIOLog("Subsystem ID for device is %" PRId64 "Only virtio devices with subsystem ID 1 (= network card) are supported by this driver.\n", sub_id);
 		return NULL;
 	}
 	if (sub_vid != vid)
 	{
-		IOLog("Warning: subsystem vendor ID (0x%04X) should normally match device vendor ID (0x%04X).\n", (unsigned)sub_vid, (unsigned)vid);
+		VIOLog("Warning: subsystem vendor ID (0x%04X) should normally match device vendor ID (0x%04X).\n", (unsigned)sub_vid, (unsigned)vid);
 	}
 	return this;
 }
@@ -442,7 +444,7 @@ static void log_feature(uint32_t feature_bitmap, uint32_t feature, const char* f
 {
 	if (feature_bitmap & feature)
 	{
-		IOLog("%s\n", feature_name);
+		VIOLog("%s\n", feature_name);
 	}
 }
 
@@ -464,15 +466,15 @@ log_feature(FEATURES, FEATURE, #FEATURE)
 
 static void virtio_log_supported_features(uint32_t dev_features)
 {
-	IOLog("virtio-net: Device reports LOW feature bitmap 0x%08x.\n", dev_features);
-	IOLog("virtio-net: Recognised generic virtio features:\n");
+	VIOLog("virtio-net: Device reports LOW feature bitmap 0x%08x.\n", dev_features);
+	VIOLog("virtio-net: Recognised generic virtio features:\n");
 	LOG_FEATURE(dev_features, VIRTIO_F_NOTIFY_ON_EMPTY);    // Supported by VBox 4.1.0
 	LOG_FEATURE(dev_features, VIRTIO_F_RING_INDIRECT_DESC);
 	LOG_FEATURE(dev_features, VIRTIO_F_RING_EVENT_IDX);
 	LOG_FEATURE(dev_features, VIRTIO_F_BAD_FEATURE);        // Must mask this out
 	LOG_FEATURE(dev_features, VIRTIO_F_FEATURES_HIGH);
 	
-	IOLog("virtio-net: Recognised virtio-net specific features:\n");
+	VIOLog("virtio-net: Recognised virtio-net specific features:\n");
 	LOG_FEATURE(dev_features, VIRTIO_NET_F_CSUM);           // Supported by VBox 4.1.0
 	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_CSUM);
 	LOG_FEATURE(dev_features, VIRTIO_NET_F_MAC);            // Supported by VBox 4.1.0
@@ -495,7 +497,7 @@ static void virtio_log_supported_features(uint32_t dev_features)
 	uint32_t unrecognised = dev_features & ~static_cast<uint32_t>(VIRTIO_ALL_KNOWN_FEATURES);
 	if (unrecognised > 0)
 	{
-		IOLog("Feature bits not recognised by this driver: 0x%08x\n", unrecognised);
+		VIOLog("Feature bits not recognised by this driver: 0x%08x\n", unrecognised);
 	}
 }
 
@@ -623,18 +625,18 @@ bool eu_philjordan_virtio_net::updateLinkStatus()
 	const OSDictionary* dict = getMediumDictionary();
 	IONetworkMedium* medium = dict ? IONetworkMedium::getMediumWithType(dict, kIOMediumEthernetAuto) : 0;
 	if (!medium)
-		IOLog("virtio-net updateLinkStatus: Warning, no medium found!\n");
+		VIOLog("virtio-net updateLinkStatus: Warning, no medium found!\n");
 	setLinkStatus((link_is_up ? kIONetworkLinkActive : 0) | kIONetworkLinkValid, medium);
 	return link_is_up;
 }
 
 void eu_philjordan_virtio_net::interruptAction(IOInterruptEventSource* source, int count)
 {
-	//IOLog("Last ISR value: 0x%02X\n", last_isr);
+	//VIOLog("Last ISR value: 0x%02X\n", last_isr);
 	uint8_t unknown_isr = last_isr & ~(VIRTIO_PCI_DEVICE_ISR_USED | VIRTIO_PCI_DEVICE_ISR_CONF_CHANGE);
 	if (unknown_isr)
 	{
-		IOLog("virtio-net interruptAction(): Unknown bits set in ISR status register: %02X\n", unknown_isr);
+		VIOLog("virtio-net interruptAction(): Unknown bits set in ISR status register: %02X\n", unknown_isr);
 	}
 	
 	bool has_reenabled_interrupts = false;
@@ -647,11 +649,11 @@ void eu_philjordan_virtio_net::interruptAction(IOInterruptEventSource* source, i
 			if (status_field_offset > 0)
 			{
 				bool up = updateLinkStatus();
-				IOLog("virtio-net interruptAction: Link change detected, link is now %s.\n", up ? "up" : "down");
+				VIOLog("virtio-net interruptAction: Link change detected, link is now %s.\n", up ? "up" : "down");
 			}
 			else
 			{
-				IOLog("virtio-net interruptAction(): received a configuration change! (currently unhandled)\n");
+				VIOLog("virtio-net interruptAction(): received a configuration change! (currently unhandled)\n");
 			}
 		}
 
@@ -697,11 +699,11 @@ static void virtio_net_log_bad_provider(IOService* provider)
 {
 	if (!provider)
 	{
-		IOLog("virtio-net start(): Error! Got NULL provider!?\n");
+		VIOLog("virtio-net start(): Error! Got NULL provider!?\n");
 		return;
 	}
 	const OSMetaClass* meta = provider->getMetaClass();
-	IOLog("virtio-net start(): Provider (%p) has wrong type: %s (expected IOPCIDevice)\n", provider, meta->getClassName());
+	VIOLog("virtio-net start(): Provider (%p) has wrong type: %s (expected IOPCIDevice)\n", provider, meta->getClassName());
 }
 
 bool eu_philjordan_virtio_net::mapVirtioConfigurationSpace()
@@ -711,7 +713,7 @@ bool eu_philjordan_virtio_net::mapVirtioConfigurationSpace()
 	IOMemoryMap* iomap = pci_dev->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
 	if (!iomap)
 	{
-		IOLog("virtio-net mapConfigurationSpace(): Error! Memory-Mapping configuration space failed.\n");
+		VIOLog("virtio-net mapConfigurationSpace(): Error! Memory-Mapping configuration space failed.\n");
 		return false;
 	}
 	PJLogVerbose("virtio-net mapConfigurationSpace(): Mapped %llu bytes of device memory at %llX. (physical address %llX)\n",
@@ -768,7 +770,7 @@ uint16_t eu_philjordan_virtio_net::virtioReadOptionalConfigFieldsGetDeviceSpecif
 UInt32 eu_philjordan_virtio_net::getFeatures() const
 {
 	if (driver_state == kDriverStateInitial)
-		IOLog("virtio-net getFeatures(): Warning! System asked about driver features before they could be detected.\n");
+		VIOLog("virtio-net getFeatures(): Warning! System asked about driver features before they could be detected.\n");
 	return (feature_tso_v4 ? kIONetworkFeatureTSOIPv4 : 0);
 }
 
@@ -779,11 +781,11 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	{
 		if (driver_state == kDriverStateStopped)
 		{
-			IOLog("virtio-net start(): Warning! Driver was re-start()ed after being stop()ped. This normally doesn't happen and is untested.\n");
+			VIOLog("virtio-net start(): Warning! Driver was re-start()ed after being stop()ped. This normally doesn't happen and is untested.\n");
 		}
 		else
 		{
-			IOLog("virtio-net start(): Error! Unexpected driver state (%d), aborting.\n", driver_state);
+			VIOLog("virtio-net start(): Error! Unexpected driver state (%d), aborting.\n", driver_state);
 			return false;
 		}
 	}
@@ -795,11 +797,11 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	UInt32 mtu = 0;
 	if (kIOReturnSuccess != getMaxPacketSize(&mtu))
 	{	
-		IOLog("Failed to determine MTU!\n");
+		VIOLog("Failed to determine MTU!\n");
 	}
 	else
 	{
-		PJLogVerbose("Reported MTU: %lu bytes\n", mtu);
+		PJLogVerbose("Reported MTU: %lu bytes\n", static_cast<size_t>(mtu));
 	}
 
 	IOPCIDevice* pci = OSDynamicCast(IOPCIDevice, provider);
@@ -861,7 +863,7 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	
 	if (!getOutputQueue())
 	{
-		IOLog("virtio-net start(): failed to get output queue\n");
+		VIOLog("virtio-net start(): failed to get output queue\n");
 		return false;
 	}
 	
@@ -869,7 +871,7 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	interface = NULL;
 	if (!attachInterface((IONetworkInterface **)&interface, false))
 	{
-		IOLog("virtio-net start(): attachInterface() failed, interface = %p [%s].\n",
+		VIOLog("virtio-net start(): attachInterface() failed, interface = %p [%s].\n",
 			interface, interface ? interface->getMetaClass()->getClassName() : "null");
 		return false;
 	}
@@ -896,7 +898,7 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	// if that worked, try to attach the debugger
 	if (!debugger_transmit_packet || !attachDebuggerClient(&debugger))
 	{
-		IOLog("virtio-net start(): Warning! Failed to instantiate %s. Continuing anyway, but debugger will be unavailable.\n",
+		VIOLog("virtio-net start(): Warning! Failed to instantiate %s. Continuing anyway, but debugger will be unavailable.\n",
 			debugger_transmit_packet ? "debugger client" : "transmission packet reserved for debugger");
 	}
 	else
@@ -931,7 +933,7 @@ void eu_philjordan_virtio_net::determineMACAddress(uint16_t device_specific_offs
 		mac_address.bytes[4] = (rnd2 >> 16) & 0xff;
 		mac_address.bytes[5] = (rnd2 >> 24) & 0xff;
 		
-		IOLog("virtio-net start(): Device does not specify its MAC address, randomly generated %02X:%02X:%02X:%02X:%02X:%02X\n",
+		VIOLog("virtio-net start(): Device does not specify its MAC address, randomly generated %02X:%02X:%02X:%02X:%02X:%02X\n",
 			mac_address.bytes[0], mac_address.bytes[1], mac_address.bytes[2],
 			mac_address.bytes[3], mac_address.bytes[4], mac_address.bytes[5]);
 	}
@@ -960,7 +962,7 @@ bool eu_philjordan_virtio_net::beginHandlingInterrupts()
 	PJLogVerbose("virtio-net beginHandlingInterrupts()\n");
 	if (!pci_dev)
 	{
-		IOLog("virtio-net beginHandlingInterrupts(): Error! PCI device must be known for generating interrupts.\n");
+		VIOLog("virtio-net beginHandlingInterrupts(): Error! PCI device must be known for generating interrupts.\n");
 		return false;
 	}
 	
@@ -988,7 +990,7 @@ bool eu_philjordan_virtio_net::beginHandlingInterrupts()
 	if (msi_index >= 0)
 	{
 		intr_index = msi_index;
-		IOLog("virtio-net beginHandlingInterrupts(): Enabled message signaled interrupts (index %d).\n", intr_index);
+		VIOLog("virtio-net beginHandlingInterrupts(): Enabled message signaled interrupts (index %d).\n", intr_index);
 	}
 	else
 	{
@@ -999,13 +1001,13 @@ bool eu_philjordan_virtio_net::beginHandlingInterrupts()
 	intr_event_source = IOFilterInterruptEventSource::filterInterruptEventSource(this, &interruptAction, &interruptFilter, pci_dev, intr_index);
 	if (!intr_event_source)
 	{
-		IOLog("virtio-net beginHandlingInterrupts(): Error! %s interrupt event source failed.\n", intr_event_source ? "Initialising" : "Allocating");
+		VIOLog("virtio-net beginHandlingInterrupts(): Error! %s interrupt event source failed.\n", intr_event_source ? "Initialising" : "Allocating");
 		OSSafeReleaseNULL(intr_event_source);
 		return false;
 	}
 	if (kIOReturnSuccess != work_loop->addEventSource(intr_event_source))
 	{
-		IOLog("virtio-net beginHandlingInterrupts(): Error! Adding interrupt event source to work loop failed.\n");
+		VIOLog("virtio-net beginHandlingInterrupts(): Error! Adding interrupt event source to work loop failed.\n");
 		OSSafeReleaseNULL(intr_event_source);
 		return false;
 	}
@@ -1018,7 +1020,7 @@ void eu_philjordan_virtio_net::endHandlingInterrupts()
 {
 	if (!intr_event_source)
 	{
-		IOLog("virtio-net endHandlingInterrupts(): Warning! Interrupt event source does not exist.\n");
+		VIOLog("virtio-net endHandlingInterrupts(): Warning! Interrupt event source does not exist.\n");
 		return;
 	}
 	
@@ -1033,7 +1035,7 @@ bool eu_philjordan_virtio_net::configureInterface(IONetworkInterface *netif)
 	PJLogVerbose("virtio-net configureInterface([%s] @ %p)\n", netif ? netif->getMetaClass()->getClassName() : "null", netif);
 	if (!super::configureInterface(netif))
 	{
-		IOLog("virtio-net configureInterface(): super failed\n");
+		VIOLog("virtio-net configureInterface(): super failed\n");
 		return false;
 	}
 	return true;
@@ -1068,12 +1070,12 @@ bool eu_philjordan_virtio_net::setupVirtqueue(
 	uint16_t queue_size = virtioHeaderReadLE16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SIZE);
 	if (queue_size == 0)
 	{
-		IOLog("virtio-net setupVirtqueue(): Queue size for queue %u is 0.\n", queue_id);
+		VIOLog("virtio-net setupVirtqueue(): Queue size for queue %u is 0.\n", queue_id);
 		return false;
 	}
 	else if (!is_pow2(queue_size))
 	{
-		IOLog("virtio-net setupVirtqueue(): Queue size for queue %u is %u, which is not a power of 2. Aborting.\n", queue_id, queue_size);
+		VIOLog("virtio-net setupVirtqueue(): Queue size for queue %u is %u, which is not a power of 2. Aborting.\n", queue_id, queue_size);
 		return false;
 	}
 	PJLogVerbose("virtio-net setupVirtqueue(): Reported queue size for queue %u: %u\n", queue_id, queue_size);
@@ -1083,7 +1085,7 @@ bool eu_philjordan_virtio_net::setupVirtqueue(
 		kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut | kIOInhibitCache, queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
 	if (!queue_buffer)
 	{
-		IOLog("virtio-net setupVirtqueue(): Failed to allocate queue buffer with " PRIuPTR " contiguous bytes and mask " PRIX64 ".\n",
+		VIOLog("virtio-net setupVirtqueue(): Failed to allocate queue buffer with %" PRIuPTR " contiguous bytes and mask %" PRIX64 ".\n",
 			queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
 		return false;
 	}
@@ -1150,18 +1152,18 @@ IOReturn eu_philjordan_virtio_net::gatedEnableDebugger(IOKernelDebugger* debugge
 	{
 		// already fully up and running anyway
 		driver_state = kDriverStateEnabledBoth;
-		IOLog("virtio-net enable(): already enabled for normal interface clients, now also enabled for debugger client.\n");
+		VIOLog("virtio-net enable(): already enabled for normal interface clients, now also enabled for debugger client.\n");
 		return kIOReturnSuccess;
 	}
 	else if (driver_state == kDriverStateEnabledBoth || driver_state == kDriverStateEnabledDebugging)
 	{
-		IOLog("virtio-net enable(): already enabled for debugging, enable() called a second time.\n");
+		VIOLog("virtio-net enable(): already enabled for debugging, enable() called a second time.\n");
 		return kIOReturnSuccess;
 	}
 	
 	if (driver_state != kDriverStateStarted)
 	{
-		IOLog("virtio-net enable(): Invalid state (%d) for enabling debugger.\n", driver_state);
+		VIOLog("virtio-net enable(): Invalid state (%d) for enabling debugger.\n", driver_state);
 		return kIOReturnInvalid;
 	}
 	
@@ -1169,7 +1171,7 @@ IOReturn eu_philjordan_virtio_net::gatedEnableDebugger(IOKernelDebugger* debugge
 #ifndef PJ_VIRTIO_NET_VERBOSE
 	if (!ok)
 #endif
-		IOLog("virtio-net enable(): Starting debugger %s.\n", ok ? "succeeded" : "failed");
+		VIOLog("virtio-net enable(): Starting debugger %s.\n", ok ? "succeeded" : "failed");
 	driver_state = ok ? kDriverStateEnabledDebugging : kDriverStateEnableFailed;
 	return ok ? kIOReturnSuccess : kIOReturnError;
 }
@@ -1178,7 +1180,7 @@ bool eu_philjordan_virtio_net::enablePartial()
 {
 	if (!pci_dev->open(this))
 	{
-		IOLog("virtio-net enable(): Opening PCI device failed.\n");
+		VIOLog("virtio-net enable(): Opening PCI device failed.\n");
 		return false;
 	}
 	if (!mapVirtioConfigurationSpace())
@@ -1190,13 +1192,13 @@ bool eu_philjordan_virtio_net::enablePartial()
 	// Initialise the receive and transmit virtqueues
 	if (!setupVirtqueue(0, rx_queue))
 		return failDevice(), false;
-	PJLogVerbose("virtio-net enable(): Initialised virtqueue 0 (receive queue) with " PRIuPTR " bytes (%u entries) at " PRIXPTR "\n",
-		rx_queue.buf->getLength(), rx_queue.num, rx_queue.buf->getPhysicalAddress());
+	PJLogVerbose("virtio-net enable(): Initialised virtqueue 0 (receive queue) with %llu bytes (%u entries) at %llX\n",
+		static_cast<uint64_t>(rx_queue.buf->getLength()), rx_queue.num, rx_queue.buf->getPhysicalSegment(0, NULL, 0));
 
 	if (!setupVirtqueue(1, tx_queue))
 		return failDevice(), kIOReturnError;
-	PJLogVerbose("virtio-net enable(): Initialised virtqueue 1 (transmit queue) with " PRIuPTR " bytes (%u entries) at " PRIXPTR "\n",
-		tx_queue.buf->getLength(), tx_queue.num, tx_queue.buf->getPhysicalAddress());
+	PJLogVerbose("virtio-net enable(): Initialised virtqueue 1 (transmit queue) with %llu bytes (%u entries) at %llX\n",
+		static_cast<uint64_t>(tx_queue.buf->getLength()), tx_queue.num, tx_queue.buf->getPhysicalSegment(0, NULL, 0));
 	// Don't support VIRTIO_NET_F_CTRL_VQ for now
 	
 			
@@ -1220,7 +1222,7 @@ bool eu_philjordan_virtio_net::enablePartial()
 		{
 			// really memory-starved, sorry!
 			driver_state = kDriverStateEnableFailedOutOfMemory;
-			IOLog("virtio-net enable(): Failed to populate receive buffers: out of memory.\n");
+			VIOLog("virtio-net enable(): Failed to populate receive buffers: out of memory.\n");
 			failDevice(); // stop producing interrupts
 			return kIOReturnNoMemory;
 		}
@@ -1260,7 +1262,7 @@ bool eu_philjordan_virtio_net::createMediumTable()
 	OSDictionary* dict = OSDictionary::withCapacity(2);
 	if (!dict)
 	{
-		IOLog("virtio-net createMediumTable: Failed to allocate dictionary.\n");
+		VIOLog("virtio-net createMediumTable: Failed to allocate dictionary.\n");
 		return false;
 	}
 	
@@ -1269,14 +1271,14 @@ bool eu_philjordan_virtio_net::createMediumTable()
 	added = added && virtio_net_add_medium(dict, kIOMediumEthernetAuto, 0);
 	if (!added)
 	{
-		IOLog("virtio-net createMediumTable: Failed to allocate and add media to table.\n");
+		VIOLog("virtio-net createMediumTable: Failed to allocate and add media to table.\n");
 		dict->release();
 		return false;
 	}
 	
 	if (!publishMediumDictionary(dict))
 	{
-		IOLog("virtio-net createMediumTable: Failed to publish medium dictionary.\n");
+		VIOLog("virtio-net createMediumTable: Failed to publish medium dictionary.\n");
 		dict->release();
 		return false;
 	}
@@ -1287,7 +1289,7 @@ bool eu_philjordan_virtio_net::createMediumTable()
 	if (medium)
 		setCurrentMedium(medium);
 	else
-		IOLog("virtio-net createMediumTable: Warning! Failed to locate current medium in table.");
+		VIOLog("virtio-net createMediumTable: Warning! Failed to locate current medium in table.");
 	
 	return true;
 }
@@ -1300,7 +1302,7 @@ IOReturn eu_philjordan_virtio_net::gatedEnableInterface(IONetworkInterface* inte
 		return kIOReturnSuccess;
 	if (driver_state != kDriverStateStarted && driver_state != kDriverStateEnabledDebugging)
 	{
-		IOLog("virtio-net enable(): Bad driver state %d (expected %d or %d), aborting.\n", driver_state, kDriverStateStarted, kDriverStateEnabledDebugging);
+		VIOLog("virtio-net enable(): Bad driver state %d (expected %d or %d), aborting.\n", driver_state, kDriverStateStarted, kDriverStateEnabledDebugging);
 		return kIOReturnInvalid;
 	}
 	bool debugger = kDriverStateEnabledDebugging;
@@ -1308,21 +1310,21 @@ IOReturn eu_philjordan_virtio_net::gatedEnableInterface(IONetworkInterface* inte
 		driver_state = kDriverStateEnableFailed;
 	if (interface != this->interface)
 	{
-		IOLog("virtio-net enable(): unknown interface %p (expected %p)\n", interface, this->interface);
+		VIOLog("virtio-net enable(): unknown interface %p (expected %p)\n", interface, this->interface);
 		return kIOReturnBadArgument;
 	}
 	
 	if (driver_state != kDriverStateEnabledDebugging && !enablePartial())
 	{
 		driver_state = kDriverStateEnableFailed;
-		IOLog("virtio-net enable(): Basic device initialisation failed.\n");
+		VIOLog("virtio-net enable(): Basic device initialisation failed.\n");
 		return kIOReturnError;
 	}
 	driver_state = kDriverStateEnableFailed;
 	
 	if (!createMediumTable())
 	{
-		IOLog("virtio-net enable(): Failed to set up interface media table\n");
+		VIOLog("virtio-net enable(): Failed to set up interface media table\n");
 		return kIOReturnNoMemory;
 	}
 
@@ -1370,7 +1372,7 @@ IOReturn eu_philjordan_virtio_net::disable(IOKernelDebugger *debugger)
 	PJLogVerbose("virtio-net disable(): Disabling debugger.\n");
 	if (driver_state != kDriverStateEnabledDebugging && driver_state != kDriverStateEnabledBoth)
 	{
-		IOLog("virtio-net disable(): Bad driver state %d, aborting.\n", driver_state);
+		VIOLog("virtio-net disable(): Bad driver state %d, aborting.\n", driver_state);
 		return kIOReturnInvalid;
 	}
 	
@@ -1393,7 +1395,7 @@ IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 	PJLogVerbose("virtio-net disable()\n");
 	if (driver_state != kDriverStateEnabled && driver_state != kDriverStateEnabledBoth)
 	{
-		IOLog("virtio-net disable(): Bad driver state %d (expected %d), aborting.\n", driver_state, kDriverStateEnabled);
+		VIOLog("virtio-net disable(): Bad driver state %d (expected %d), aborting.\n", driver_state, kDriverStateEnabled);
 		return kIOReturnInvalid;
 	}
 	
@@ -1706,7 +1708,7 @@ void eu_philjordan_virtio_net::outputPacketSegment(IOMemoryCursor::PhysicalSegme
 	}
 	
 	if (segment.length < 1)
-		IOLog("virtio-net outputPacketSegment(): Zero length segment!\n");
+		VIOLog("virtio-net outputPacketSegment(): Zero length segment!\n");
 	
 	int32_t desc = ctx->descs[segmentIndex];
 	if (desc < 0)
@@ -1725,7 +1727,7 @@ void eu_philjordan_virtio_net::outputPacketSegment(IOMemoryCursor::PhysicalSegme
 	if (desc < 0)
 	{
 		--ctx->descs_allocd;
-		IOLog("virtio-net outputPacketSegment(): failed to allocate descriptor.\n");
+		VIOLog("virtio-net outputPacketSegment(): failed to allocate descriptor.\n");
 		ctx->error = ctx->out_of_descriptors = true;
 		return;
 	}
@@ -1800,11 +1802,11 @@ static void virtio_net_enable_tcp_csum(virtio_net_packet* packet, bool need_part
 			
 			if (ip_hdr->ip_v != 4)
 			{
-				IOLog("Warning! IP header says version %u, expected 4 for IPv4!\n", ip_hdr->ip_v);
+				VIOLog("Warning! IP header says version %u, expected 4 for IPv4!\n", ip_hdr->ip_v);
 			}
 			if (ip_hdr->ip_p != 6)
 			{
-				IOLog("Warning! IP header refers to protocol %u, expected 6 for TCP!\n", ip_hdr->ip_p);
+				VIOLog("Warning! IP header refers to protocol %u, expected 6 for TCP!\n", ip_hdr->ip_p);
 			}
 			
 			packet->header.flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
@@ -1838,7 +1840,7 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 		{
 			static bool has_warned_bad_demand_mask = false;
 			if (!has_warned_bad_demand_mask)
-				IOLog("virtio-net addPacketToQueue(): Warning! Checksum demand mask is %08X\n", (uint32_t)demand_mask);
+				VIOLog("virtio-net addPacketToQueue(): Warning! Checksum demand mask is %08X\n", (uint32_t)demand_mask);
 			has_warned_bad_demand_mask = true;
 		}
 		if (demand_mask & kChecksumTCP)
@@ -1856,7 +1858,7 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 				if (!has_had_tso_err)
 				{
 					has_had_tso_err = true;
-					IOLog("virtio-net addPacketToQueue(): mbuf_get_tso_requested() returned %d\n", tso_err);
+					VIOLog("virtio-net addPacketToQueue(): mbuf_get_tso_requested() returned %d\n", tso_err);
 				}
 			}
 			else if (tso_req != 0)
@@ -1864,7 +1866,7 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 				static bool has_had_tso_req_err = false;
 				if (0 != (tso_req & ~(MBUF_TSO_IPV4 | MBUF_TSO_IPV6)) && !has_had_tso_req_err)
 				{
-					IOLog("virtio-net addPacketToQueue(): Warning! mbuf_get_tso_requested() unknown TSO bitfield %08X.\n", tso_req);
+					VIOLog("virtio-net addPacketToQueue(): Warning! mbuf_get_tso_requested() unknown TSO bitfield %08X.\n", tso_req);
 					has_had_tso_req_err = true;
 				}
 				tso_req &= (MBUF_TSO_IPV4 | MBUF_TSO_IPV6);
@@ -1877,7 +1879,7 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 				{
 					static bool has_had_tso6 = false;
 					//if (!has_had_tso6)
-						IOLog("virtio-net addPacketToQueue(): Warning! mbuf_get_tso_requested() requested unexpected TCPv6 TSO: %08X\n", tso_req);
+						VIOLog("virtio-net addPacketToQueue(): Warning! mbuf_get_tso_requested() requested unexpected TCPv6 TSO: %08X\n", tso_req);
 					has_had_tso6 = true;
 				}
 			}
@@ -2012,7 +2014,7 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 	
 	if (segments != segment_context.max_segment_created + 1)
 	{
-		IOLog("virtio-net addPacketToQueue(): genPhysicalSegments reports %u, max index is %d!\n", segments, segment_context.max_segment_created);
+		VIOLog("virtio-net addPacketToQueue(): genPhysicalSegments reports %u, max index is %d!\n", segments, segment_context.max_segment_created);
 	}
 
 	uint16_t prev = head_desc;
@@ -2020,7 +2022,7 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 	{
 		if (descs[i] < 0)
 		{
-			IOLog("virtio-net addPacketToQueue(): no descriptor for index %u (%u total), max seg %d\n", i, segments, segment_context.max_segment_created);
+			VIOLog("virtio-net addPacketToQueue(): no descriptor for index %u (%u total), max seg %d\n", i, segments, segment_context.max_segment_created);
 			continue;
 		}
 		queue.desc[prev].next = descs[i];
@@ -2044,7 +2046,7 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 		{
 			if (head_len != max_head_len)
 			{
-				IOLog("virtio-net addPacketToQueue(): Warning! head mbuf %lu does not match mtu-seg %d\n", head_len, max_head_len);
+				VIOLog("virtio-net addPacketToQueue(): Warning! head mbuf %lu does not match mtu-seg %d\n", head_len, max_head_len);
 			}
 		}
 		packet->header.hdr_len = head_len; // not sure if this is right...
@@ -2052,7 +2054,7 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 #if 0				
 				if (tso_packets % 100 == 1)
 				{
-					IOLog("virtio-net addPacketToQueue: %u TSO (%u TSO4) packets processed, current packet's length %u, segment size %u, ethernet+ip hdr len %u, total header len %lu, %u segments.\n",
+					VIOLog("virtio-net addPacketToQueue: %u TSO (%u TSO4) packets processed, current packet's length %u, segment size %u, ethernet+ip hdr len %u, total header len %lu, %u segments.\n",
 						tso_packets, tso4_packets, segment_context.total_len, packet->header.gso_size, packet->header.hdr_len, head_len, segments);
 //#if 0
 					uint16_t desc = head_desc;
@@ -2062,7 +2064,7 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 						/* note that lacking any driver bugs, this will only defend against a
 						 * buggy/malicious hypervisor, which is like fighting windmills.
 						 */
-						IOLog("virtio-net addPacketToQueue(): used buffer %u: length %u.\n",
+						VIOLog("virtio-net addPacketToQueue(): used buffer %u: length %u.\n",
 							desc, tx_queue.desc[desc].len, packet);
 						if (0 == (tx_queue.desc[desc].flags & VRING_DESC_F_NEXT))
 							break;
@@ -2106,7 +2108,7 @@ bool eu_philjordan_virtio_net::populateReceiveBuffers()
 		{
 			static int alloc_fail_count = 0;
 			if (alloc_fail_count % 10 == 0 && alloc_fail_count < 100)
-				IOLog("virtio-net populateReceiveBuffers(): Warning! Failed to allocate mbuf for receiving (%d).\n", alloc_fail_count);
+				VIOLog("virtio-net populateReceiveBuffers(): Warning! Failed to allocate mbuf for receiving (%d).\n", alloc_fail_count);
 			++alloc_fail_count;
 			
 			return (added && notifyQueueAvailIdx(rx_queue, avail_idx)), false;
@@ -2126,7 +2128,7 @@ bool eu_philjordan_virtio_net::populateReceiveBuffers()
 		{
 			static int add_fail_count = 0;
 			if (add_fail_count % 10 == 0 && add_fail_count < 100)
-				IOLog("virtio-net populateReceiveBuffers(): Warning! Failed to add packet to receive queue (%d).\n", add_fail_count);
+				VIOLog("virtio-net populateReceiveBuffers(): Warning! Failed to add packet to receive queue (%d).\n", add_fail_count);
 			++add_fail_count;
 			return freePacket(packet_mbuf), (added && notifyQueueAvailIdx(rx_queue, avail_idx)), false;
 		}
@@ -2179,7 +2181,7 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 		}
 		if (used_desc >= tx_queue.num)
 		{
-			IOLog("virtio-net releaseSentPackets(): Warning! Out of range descriptor index %u in used transmit queue.\n", used_desc);
+			VIOLog("virtio-net releaseSentPackets(): Warning! Out of range descriptor index %u in used transmit queue.\n", used_desc);
 			++tx_queue.last_used_idx;
 			continue;
 		}
@@ -2211,7 +2213,7 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 			}
 			else
 			{
-				IOLog("virtio-net releaseSentPackets(): warning, packet with no mbuf, probably leaking memory.\n");
+				VIOLog("virtio-net releaseSentPackets(): warning, packet with no mbuf, probably leaking memory.\n");
 			}
 			packet->mbuf = NULL;
 			IOBufferMemoryDescriptor* mem = packet->mem;
@@ -2221,14 +2223,14 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 			}
 			else
 			{
-				IOLog("virtio-net releaseSentPackets(): warning, packet with no memory descriptor, probably leaking memory.\n");
+				VIOLog("virtio-net releaseSentPackets(): warning, packet with no memory descriptor, probably leaking memory.\n");
 			}
 			OSSafeReleaseNULL(mem);
 		}
 		else
 		{
-			IOLog("virtio-net releaseSentPackets(): warning, used transmit buffer chain without matching packet reported. Probably leaking memory.\n");
-			IOLog("virtio-net releaseSentPackets(): tx queue used element: desc %u, length %u\n", used.id, used.len);
+			VIOLog("virtio-net releaseSentPackets(): warning, used transmit buffer chain without matching packet reported. Probably leaking memory.\n");
+			VIOLog("virtio-net releaseSentPackets(): tx queue used element: desc %u, length %u\n", used.id, used.len);
 			uint16_t desc = used_desc;
 			uint16_t desc2 = used_desc;
 			while (true)
@@ -2237,14 +2239,14 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 				/* note that lacking any driver bugs, this will only defend against a
 				 * buggy/malicious hypervisor, which is like fighting windmills.
 				 */
-				IOLog("virtio-net releaseSentPackets(): used buffer %u: length %u, associated packet: %p\n",
+				VIOLog("virtio-net releaseSentPackets(): used buffer %u: length %u, associated packet: %p\n",
 					desc2, tx_queue.desc[desc2].len, packet);
 				if (desc2 >= tx_queue.num || 0 == (tx_queue.desc[desc2].flags & VRING_DESC_F_NEXT))
 					break;
 				desc2 = tx_queue.desc[desc2].next;
 				if (desc == desc2)
 					break;
-				IOLog("virtio-net releaseSentPackets(): used buffer %u: length %u, associated packet: %p\n",
+				VIOLog("virtio-net releaseSentPackets(): used buffer %u: length %u, associated packet: %p\n",
 					desc2, tx_queue.desc[desc2].len, packet);
 				if (desc2 >= tx_queue.num || 0 == (tx_queue.desc[desc2].flags & VRING_DESC_F_NEXT))
 					break;
@@ -2286,7 +2288,7 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 		{
 			if (!(used_desc == UINT16_MAX && used.len == 0))
 			{
-				IOLog("virtio-net handleReceivedPackets(): Warning! Out of range descriptor %u in used ring, skipping.\n",
+				VIOLog("virtio-net handleReceivedPackets(): Warning! Out of range descriptor %u in used ring, skipping.\n",
 					used_desc);
 			}
 			++rx_queue.last_used_idx;
@@ -2335,8 +2337,8 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 		}
 		else
 		{
-			IOLog("virtio-net handleReceivedPackets(): warning, used receive buffer chain without matching packet reported. Probably leaking memory.\n");
-			IOLog("virtio-net: handleReceivedPackets(): rx queue used element: desc %u, length %u\n", used.id, used.len);
+			VIOLog("virtio-net handleReceivedPackets(): warning, used receive buffer chain without matching packet reported. Probably leaking memory.\n");
+			VIOLog("virtio-net: handleReceivedPackets(): rx queue used element: desc %u, length %u\n", used.id, used.len);
 			uint16_t desc = used_desc;
 			while (true)
 			{
@@ -2344,7 +2346,7 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 				/* note that lacking any driver bugs, this will only defend against a
 				 * buggy/malicious hypervisor, which is like fighting windmills.
 				 */
-				IOLog("virtio-net: handleReceivedPackets(): used buffer %u: length %u, associated packet: %p\n",
+				VIOLog("virtio-net: handleReceivedPackets(): used buffer %u: length %u, associated packet: %p\n",
 					desc, rx_queue.desc[desc].len, packet);
 				if (0 == (rx_queue.desc[desc].flags & VRING_DESC_F_NEXT))
 					break;
@@ -2403,7 +2405,7 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 {
 	PJLogVerbose("virtio-net stop()\n");
 	if (provider != this->pci_dev)
-		IOLog("Warning: stopping virtio-net with a different provider!?\n");
+		VIOLog("Warning: stopping virtio-net with a different provider!?\n");
 	
 	if (debugger_transmit_packet)
 	{
@@ -2417,13 +2419,13 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 	
 	if (driver_state == kDriverStateEnabled)
 	{
-		IOLog("virtio-net stop(): Warning! Device is still enabled. Disabling it.\n");
+		VIOLog("virtio-net stop(): Warning! Device is still enabled. Disabling it.\n");
 		disable(interface);
 	}
 		
 	if (intr_event_source)
 	{
-		IOLog("virtio-net stop(): Warning! Event source still exists, this should have been shut down by now.\n");
+		VIOLog("virtio-net stop(): Warning! Event source still exists, this should have been shut down by now.\n");
 		endHandlingInterrupts();
 	}
 	
@@ -2454,7 +2456,7 @@ void eu_philjordan_virtio_net::free()
 
 	if (intr_event_source)
 	{
-		IOLog("virtio-net free(): Warning! Event source still exists, this should have been shut down by now.\n");
+		VIOLog("virtio-net free(): Warning! Event source still exists, this should have been shut down by now.\n");
 		endHandlingInterrupts();
 	}
 	OSSafeReleaseNULL(work_loop);
@@ -2471,7 +2473,7 @@ IOReturn eu_philjordan_virtio_net::getHardwareAddress(IOEthernetAddress* addrP)
 {
 	if (!mac_address_is_valid)
 	{
-		IOLog("virtio-net getHardwareAddress(): Warning! MAC address not ready, this shouldn't normally happen.\n");
+		VIOLog("virtio-net getHardwareAddress(): Warning! MAC address not ready, this shouldn't normally happen.\n");
 		return kIOReturnNotReady;
 	}
 	*addrP = mac_address;
