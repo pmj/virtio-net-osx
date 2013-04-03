@@ -243,7 +243,7 @@ bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 	
 	pci_dev = NULL;
 	rx_queue.buf = NULL;
-	this->pci_config_mmap = NULL;
+	this->pci_virtio_header_iomap = NULL;
 	return true;
 }
 
@@ -510,59 +510,59 @@ ssize_t virtio_hi_feature_bitmap_offset(uint32_t dev_features, size_t& config_of
 	}
 	return hi_features_offset;
 }
+// Helper functions for reading/writing the virtio header registers
 
-// Helper functions for reading/writing the configuration space
 
-void eu_philjordan_virtio_net::configWrite8(uint16_t offset, uint8_t val)
+void eu_philjordan_virtio_net::virtioHeaderWrite8(uint16_t offset, uint8_t val)
 {
-	pci_dev->ioWrite8(offset, val, pci_config_mmap);
+	pci_dev->ioWrite8(offset, val, pci_virtio_header_iomap);
 }
-void eu_philjordan_virtio_net::configWrite16(uint16_t offset, uint16_t val)
+void eu_philjordan_virtio_net::virtioHeaderWrite16(uint16_t offset, uint16_t val)
 {
-	pci_dev->ioWrite16(offset, val, pci_config_mmap);
+	pci_dev->ioWrite16(offset, val, pci_virtio_header_iomap);
 }
-void eu_philjordan_virtio_net::configWrite32(uint16_t offset, uint32_t val)
+void eu_philjordan_virtio_net::virtioHeaderWrite32(uint16_t offset, uint32_t val)
 {
-	pci_dev->ioWrite32(offset, val, pci_config_mmap);
+	pci_dev->ioWrite32(offset, val, pci_virtio_header_iomap);
 }
-uint8_t eu_philjordan_virtio_net::configRead8(uint16_t offset)
+uint8_t eu_philjordan_virtio_net::virtioHeaderRead8(uint16_t offset)
 {
-	return pci_dev->ioRead8(offset, pci_config_mmap);
+	return pci_dev->ioRead8(offset, pci_virtio_header_iomap);
 }
-uint16_t eu_philjordan_virtio_net::configRead16(uint16_t offset)
+uint16_t eu_philjordan_virtio_net::virtioHeaderRead16(uint16_t offset)
 {
-	return pci_dev->ioRead16(offset, pci_config_mmap);
+	return pci_dev->ioRead16(offset, pci_virtio_header_iomap);
 }
-uint32_t eu_philjordan_virtio_net::configRead32(uint16_t offset)
+uint32_t eu_philjordan_virtio_net::virtioHeaderRead32(uint16_t offset)
 {
-	return pci_dev->ioRead32(offset, pci_config_mmap);
+	return pci_dev->ioRead32(offset, pci_virtio_header_iomap);
 }
 
-void eu_philjordan_virtio_net::configWriteLE32(uint16_t offset, uint32_t val)
+void eu_philjordan_virtio_net::virtioHeaderWriteLE32(uint16_t offset, uint32_t val)
 {
-	configWrite32(offset, OSSwapHostToLittleInt32(val));
+	virtioHeaderWrite32(offset, OSSwapHostToLittleInt32(val));
 }
-uint32_t eu_philjordan_virtio_net::configReadLE32(uint16_t offset)
+uint32_t eu_philjordan_virtio_net::virtioHeaderReadLE32(uint16_t offset)
 {
-	return OSSwapLittleToHostInt32(configRead32(offset));
+	return OSSwapLittleToHostInt32(virtioHeaderRead32(offset));
 }
-void eu_philjordan_virtio_net::configWriteLE16(uint16_t offset, uint16_t val)
+void eu_philjordan_virtio_net::virtioHeaderWriteLE16(uint16_t offset, uint16_t val)
 {
-	configWrite16(offset, OSSwapHostToLittleInt16(val));
+	virtioHeaderWrite16(offset, OSSwapHostToLittleInt16(val));
 }
-uint16_t eu_philjordan_virtio_net::configReadLE16(uint16_t offset)
+uint16_t eu_philjordan_virtio_net::virtioHeaderReadLE16(uint16_t offset)
 {
-	return OSSwapLittleToHostInt16(configRead16(offset));
+	return OSSwapLittleToHostInt16(virtioHeaderRead16(offset));
 }
 
 
 void eu_philjordan_virtio_net::setVirtioDeviceStatus(uint8_t status)
 {
-	configWrite8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, status);
+	virtioHeaderWrite8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, status);
 }
 void eu_philjordan_virtio_net::updateVirtioDeviceStatus(uint8_t status)
 {
-	uint8_t old_status = configRead8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS);
+	uint8_t old_status = virtioHeaderRead8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS);
 	setVirtioDeviceStatus(status | old_status);
 }
 
@@ -570,10 +570,10 @@ void eu_philjordan_virtio_net::failDevice()
 {
 	if (pci_dev)
 	{
-		if (pci_config_mmap)
+		if (this->pci_virtio_header_iomap)
 		{
 			updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_FAILED);
-			OSSafeReleaseNULL(pci_config_mmap);
+			OSSafeReleaseNULL(this->pci_virtio_header_iomap);
 		}
 		pci_dev->close(this);
 	}
@@ -587,7 +587,7 @@ bool eu_philjordan_virtio_net::interruptFilter(OSObject* me, IOFilterInterruptEv
 		return false; // this isn't really for us
 	
 	// check if anything interesting has happened, record status register
-	uint8_t isr = virtio_net->configRead8(VIRTIO_PCI_CONF_OFFSET_ISR_STATUS);
+	uint8_t isr = virtio_net->virtioHeaderRead8(VIRTIO_PCI_CONF_OFFSET_ISR_STATUS);
 	virtio_net->last_isr = isr;
 	if (isr & VIRTIO_PCI_DEVICE_ISR_USED)
 	{
@@ -706,52 +706,46 @@ static void virtio_net_log_bad_provider(IOService* provider)
 
 bool eu_philjordan_virtio_net::mapVirtioConfigurationSpace()
 {
-	assert(!iomap);
 	assert(pci_dev);
 	PJLogVerbose("virtio-net mapConfigurationSpace(): attempting to map device memory with register 0\n");
-	IODeviceMemory* devmem = pci_dev->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
-	if (!devmem)
-	{
-		IOLog("virtio-net mapConfigurationSpace(): Error! Getting memory descriptor failed.\n");
-		return false;
-	}
-	IOMemoryMap* iomap = devmem->map();
-	devmem = NULL; // no longer needed - do not release, however (see getDeviceMemoryWithRegister() docs)
+	IOMemoryMap* iomap = pci_dev->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
 	if (!iomap)
 	{
 		IOLog("virtio-net mapConfigurationSpace(): Error! Memory-Mapping configuration space failed.\n");
 		return false;
 	}
-	this->pci_config_mmap = iomap;
+	PJLogVerbose("virtio-net mapConfigurationSpace(): Mapped %llu bytes of device memory at %llX. (physical address %llX)\n",
+		static_cast<uint64_t>(iomap->getLength()), iomap->getAddress(), pci_dev->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0)->getPhysicalSegment(0, NULL, 0));
+	this->pci_virtio_header_iomap = iomap;
 	return true;
 }
 
 void eu_philjordan_virtio_net::virtioResetDevice()
 {
 	assert(pci_dev);
-	assert(pci_config_mmap);
+	assert(this->pci_virtio_header_iomap);
 	setVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_RESET);
 }
 
 uint32_t eu_philjordan_virtio_net::virtioResetInitAndReadFeatureBits()
 {
 	assert(pci_dev);
-	assert(pci_config_mmap);
+	assert(this->pci_virtio_header_iomap);
 	// Reset the device just in case it was previously opened and left in a weird state.
 	virtioResetDevice();
 	// Acknowledge the device, then tell it we're the driver
 	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_ACKNOWLEDGE);
 	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_DRIVER);
 	
-	dev_features_lo = configReadLE32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31);
-	return dev_features_lo;
+	dev_feature_bitmap = virtioHeaderReadLE32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31);
+	return dev_feature_bitmap;
 }
 
 uint16_t eu_philjordan_virtio_net::virtioReadOptionalConfigFieldsGetDeviceSpecificOffset()
 {
 	assert(pci_dev);
 	assert(dev_features_lo > 0); // if the features have been read, at the very least the BAD_FEATURE bit will be set
-	assert(pci_config_mmap);
+	assert(this->pci_virtio_header_iomap);
 	
 	/* Read out the flexible config space */
 	size_t config_offset = VIRTIO_PCI_CONF_OFFSET_END_HEADER;
@@ -862,7 +856,7 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	
 	// we're not actually interested in the device for now until it's enable()d
 	virtioResetDevice();
-	OSSafeReleaseNULL(pci_config_mmap);
+	OSSafeReleaseNULL(pci_virtio_header_iomap);
 	pci_dev->close(this);
 	
 	if (!getOutputQueue())
@@ -915,11 +909,11 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 void eu_philjordan_virtio_net::determineMACAddress(uint16_t device_specific_offset)
 {
 	// sort out mac address
-	if (dev_features_lo & VIRTIO_NET_F_MAC)
+	if (dev_feature_bitmap & VIRTIO_NET_F_MAC)
 	{
 		for (unsigned i = 0; i < sizeof(mac_address); ++i)
 		{
-			mac_address.bytes[i] = configRead8(device_specific_offset + offsetof(virtio_net_config, mac[i]));
+			mac_address.bytes[i] = virtioHeaderRead8(device_specific_offset + offsetof(virtio_net_config, mac[i]));
 		}
 		PJLogVerbose("virtio-net start(): Determined MAC address: %02X:%02X:%02X:%02X:%02X:%02X\n",
 			mac_address.bytes[0], mac_address.bytes[1], mac_address.bytes[2],
@@ -950,7 +944,7 @@ void eu_philjordan_virtio_net::detectLinkStatusFeature(uint16_t device_specific_
 	assert(dev_features_lo > 0);
 	status_field_offset = 0;
 	bool link_is_up = true;
-	if (dev_features_lo & VIRTIO_NET_F_STATUS)
+	if (dev_feature_bitmap & VIRTIO_NET_F_STATUS)
 	{
 		status_field_offset = device_specific_offset + offsetof(virtio_net_config, status);
 		uint16_t status = readStatus();
@@ -1056,7 +1050,7 @@ IOReturn eu_philjordan_virtio_net::getPacketFilters(const OSSymbol *group, UInt3
 int32_t eu_philjordan_virtio_net::readStatus()
 {
 	if (!status_field_offset) return -1;
-	return configRead16(status_field_offset);
+	return virtioHeaderRead16(status_field_offset);
 }
 
 bool eu_philjordan_virtio_net::setupVirtqueue(
@@ -1070,8 +1064,8 @@ bool eu_philjordan_virtio_net::setupVirtqueue(
 	// queue 0 is receive queue (Appendix C, Configuration)
 	// queue 1 is transmit queue
 	// queue 2 is control queue (if present)
-	configWriteLE16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SELECT, queue_id);
-	uint16_t queue_size = configReadLE16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SIZE);
+	virtioHeaderWriteLE16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SELECT, queue_id);
+	uint16_t queue_size = virtioHeaderReadLE16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SIZE);
 	if (queue_size == 0)
 	{
 		IOLog("virtio-net setupVirtqueue(): Queue size for queue %u is 0.\n", queue_id);
@@ -1097,7 +1091,7 @@ bool eu_philjordan_virtio_net::setupVirtqueue(
 				
 	virtqueue_init(queue, queue_buffer, queue_size, queue_id);
 
-	configWriteLE32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, static_cast<uint32_t>(queue_buffer->getPhysicalAddress() >> 12u));
+	virtioHeaderWriteLE32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, static_cast<uint32_t>(queue_buffer->getPhysicalAddress() >> 12u));
 	
 	return true;
 }
@@ -1209,7 +1203,7 @@ bool eu_philjordan_virtio_net::enablePartial()
 	// write back supported features
 	uint32_t supported_features = dev_features &
 		(VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | (feature_checksum_offload ? (VIRTIO_NET_F_CSUM | VIRTIO_NET_F_HOST_TSO4) : 0));
-	configWriteLE32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31, supported_features);
+	virtioHeaderWriteLE32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31, supported_features);
 	PJLogVerbose("virtio-net enable(): Wrote driver-supported feature bits: 0x%08X\n", supported_features);
 	
 	// tell device we're ready
@@ -1436,7 +1430,7 @@ void eu_philjordan_virtio_net::disablePartial()
 	// disable the device to stop any more interrupts from occurring
 	virtioResetDevice();
 	// unmap and close device
-	OSSafeReleaseNULL(this->pci_config_mmap);
+	OSSafeReleaseNULL(this->pci_virtio_header_iomap);
 	pci_dev->close(this);
 
 	endHandlingInterrupts();
@@ -1668,7 +1662,7 @@ bool eu_philjordan_virtio_net::notifyQueueAvailIdx(virtio_net_virtqueue& queue, 
 	OSSynchronizeIO();
 	if (0 == (queue.used->flags & VRING_USED_F_NO_NOTIFY))
 	{
-		configWrite16(VIRTIO_PCI_CONF_OFFSET_QUEUE_NOTIFY, queue.index);
+		virtioHeaderWrite16(VIRTIO_PCI_CONF_OFFSET_QUEUE_NOTIFY, queue.index);
 		return true;
 	}
 	return false;
@@ -2440,7 +2434,7 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 	virtqueue_free(rx_queue);
 	virtqueue_free(tx_queue);
 	
-	OSSafeReleaseNULL(pci_config_mmap);
+	OSSafeReleaseNULL(this->pci_virtio_header_iomap);
 	if (pci_dev && pci_dev->isOpen(this))
 		pci_dev->close(this);
 	this->pci_dev = NULL;
@@ -2456,7 +2450,7 @@ void eu_philjordan_virtio_net::free()
 	OSSafeReleaseNULL(packet_bufdesc_pool);
 	OSSafeReleaseNULL(interface);
 
-	OSSafeReleaseNULL(this->pci_config_mmap);
+	OSSafeReleaseNULL(this->pci_virtio_header_iomap);
 
 	if (intr_event_source)
 	{

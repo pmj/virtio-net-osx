@@ -217,16 +217,16 @@ protected:
 	bool setupVirtqueue(uint16_t queue_id, virtio_net_virtqueue& queue);
 	/// Sets the "failed" bit in the device's status register
 	void failDevice();
-	void configWrite8(uint16_t offset, uint8_t val);
-	void configWrite16(uint16_t offset, uint16_t val);
-	void configWrite32(uint16_t offset, uint32_t val);
-	uint8_t configRead8(uint16_t offset);
-	uint16_t configRead16(uint16_t offset);
-	uint32_t configRead32(uint16_t offset);
-	void configWriteLE32(uint16_t offset, uint32_t val);
-	uint32_t configReadLE32(uint16_t offset);
-	void configWriteLE16(uint16_t offset, uint16_t val);
-	uint16_t configReadLE16(uint16_t offset);
+	void virtioHeaderWrite8(uint16_t offset, uint8_t val);
+	void virtioHeaderWrite16(uint16_t offset, uint16_t val);
+	void virtioHeaderWrite32(uint16_t offset, uint32_t val);
+	uint8_t virtioHeaderRead8(uint16_t offset);
+	uint16_t virtioHeaderRead16(uint16_t offset);
+	uint32_t virtioHeaderRead32(uint16_t offset);
+	void virtioHeaderWriteLE32(uint16_t offset, uint32_t val);
+	uint32_t virtioHeaderReadLE32(uint16_t offset);
+	void virtioHeaderWriteLE16(uint16_t offset, uint16_t val);
+	uint16_t virtioHeaderReadLE16(uint16_t offset);
 	
 	// Universal virtio configuration space/status functions:
 	
@@ -317,8 +317,8 @@ protected:
 	
 	/// The provider device. NOT retained.
 	IOPCIDevice* pci_dev;
-	/// Memory mapping of the virtio PCI configuration registers
-	IOMemoryMap* pci_config_mmap;
+	/// I/O space mapping of the virtio PCI header registers
+	IOMemoryMap* pci_virtio_header_iomap;
 	
 	/// The standard bit map of virtio device features
 	uint32_t dev_features_lo;
