@@ -321,7 +321,7 @@ IOService* eu_philjordan_virtio_net::probe(IOService* provider, SInt32* score)
 	return this;
 }
 
-enum VirtioPCIConfigHeaderOffsets
+enum VirtioPCIHeaderOffsets
 {
 	VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31 = 0,
 	VIRTIO_PCI_CONF_OFFSET_GUEST_FEATURE_BITS_0_31 = 4 + VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31,
