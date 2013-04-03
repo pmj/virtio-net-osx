@@ -141,16 +141,6 @@ static inline bool is_pow2(uint16_t num)
 	return 0u == (num & (num - 1));
 }
 
-template <typename T> void release_obj(T*& obj)
-{
-	OSObject* const o = obj;
-	if (o)
-	{
-		o->release();
-		obj = NULL;
-	}
-}
-
 static void virtio_net_log_property_dict(OSDictionary* props)
 {
 	IOLog("virtio-net: begin property dictionary:\n");
@@ -247,7 +237,7 @@ bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 	if (!packet_memory_cursor || !packet_memory_cursor->initWithSpecification(outputPacketSegment, UINT32_MAX, tx_queue.num - 1))
 	{
 		IOLog("virtio-net init(): Failed to %s memory cursor.\n", packet_memory_cursor ? "initialise" : "allocate");
-		release_obj(packet_memory_cursor);
+		OSSafeReleaseNULL(packet_memory_cursor);
 		return false;
 	}
 	
@@ -583,7 +573,7 @@ void eu_philjordan_virtio_net::failDevice()
 		if (pci_config_mmap)
 		{
 			updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_FAILED);
-			release_obj(pci_config_mmap);
+			OSSafeReleaseNULL(pci_config_mmap);
 		}
 		pci_dev->close(this);
 	}
@@ -872,7 +862,7 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	
 	// we're not actually interested in the device for now until it's enable()d
 	virtioResetDevice();
-	release_obj(pci_config_mmap);
+	OSSafeReleaseNULL(pci_config_mmap);
 	pci_dev->close(this);
 	
 	if (!getOutputQueue())
@@ -1016,13 +1006,13 @@ bool eu_philjordan_virtio_net::beginHandlingInterrupts()
 	if (!intr_event_source)
 	{
 		IOLog("virtio-net beginHandlingInterrupts(): Error! %s interrupt event source failed.\n", intr_event_source ? "Initialising" : "Allocating");
-		release_obj(intr_event_source);
+		OSSafeReleaseNULL(intr_event_source);
 		return false;
 	}
 	if (kIOReturnSuccess != work_loop->addEventSource(intr_event_source))
 	{
 		IOLog("virtio-net beginHandlingInterrupts(): Error! Adding interrupt event source to work loop failed.\n");
-		release_obj(intr_event_source);
+		OSSafeReleaseNULL(intr_event_source);
 		return false;
 	}
 	intr_event_source->enable();
@@ -1039,7 +1029,7 @@ void eu_philjordan_virtio_net::endHandlingInterrupts()
 	}
 	
 	work_loop->removeEventSource(intr_event_source);
-	release_obj(intr_event_source);
+	OSSafeReleaseNULL(intr_event_source);
 }
 
 
@@ -1134,7 +1124,7 @@ void virtqueue_init(virtio_net_virtqueue& queue, IOBufferMemoryDescriptor* buf, 
 
 void virtqueue_free(virtio_net_virtqueue& queue)
 {
-	release_obj(queue.buf);
+	OSSafeReleaseNULL(queue.buf);
 	if (queue.packets_for_descs)
 	{
 		PJFreeArray(queue.packets_for_descs, queue.num);
@@ -1375,7 +1365,7 @@ void eu_philjordan_virtio_net::clearVirtqueuePackets(virtio_net_virtqueue& queue
 
 		if (packet->mbuf)
 			freePacket(packet->mbuf);
-		release_obj(packet->mem);
+		OSSafeReleaseNULL(packet->mem);
 		
 		queue.packets_for_descs[i] = NULL;
 	}
@@ -1446,7 +1436,7 @@ void eu_philjordan_virtio_net::disablePartial()
 	// disable the device to stop any more interrupts from occurring
 	virtioResetDevice();
 	// unmap and close device
-	release_obj(this->pci_config_mmap);
+	OSSafeReleaseNULL(this->pci_config_mmap);
 	pci_dev->close(this);
 
 	endHandlingInterrupts();
@@ -1980,7 +1970,10 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 	// get the necessary descriptor for the head
 	const int32_t head_desc = vring_pop_free_desc(queue);
 	if (head_desc < 0)
-		return release_obj(packet_mem), kIOReturnOutputStall;
+	{
+		OSSafeReleaseNULL(packet_mem);
+		return kIOReturnOutputStall;
+	}
 
 	// set up the header buffer descriptor
 	const uint16_t direction_flag = for_writing ? VRING_DESC_F_WRITE : 0;
@@ -2019,7 +2012,7 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 		
 		vring_push_free_desc(queue, head_desc);
 		
-		release_obj(packet_mem);
+		OSSafeReleaseNULL(packet_mem);
 		return segment_context.out_of_descriptors ? kIOReturnOutputStall : kIOReturnError;
 	}
 	
@@ -2236,7 +2229,7 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 			{
 				IOLog("virtio-net releaseSentPackets(): warning, packet with no memory descriptor, probably leaking memory.\n");
 			}
-			release_obj(mem);
+			OSSafeReleaseNULL(mem);
 		}
 		else
 		{
@@ -2344,7 +2337,7 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 			IOBufferMemoryDescriptor* mem = packet->mem;
 			if (mem)
 				packet_bufdesc_pool->setObject(mem);
-			release_obj(mem);
+			OSSafeReleaseNULL(mem);
 		}
 		else
 		{
@@ -2441,13 +2434,13 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 	}
 	
 	packet_bufdesc_pool->flushCollection();
-	release_obj(interface);
+	OSSafeReleaseNULL(interface);
 	clearVirtqueuePackets(rx_queue);
 	clearVirtqueuePackets(tx_queue);
 	virtqueue_free(rx_queue);
 	virtqueue_free(tx_queue);
 	
-	release_obj(pci_config_mmap);
+	OSSafeReleaseNULL(pci_config_mmap);
 	if (pci_dev && pci_dev->isOpen(this))
 		pci_dev->close(this);
 	this->pci_dev = NULL;
@@ -2460,18 +2453,18 @@ void eu_philjordan_virtio_net::free()
 {
 	PJLogVerbose("virtio-net free()\n");
 	
-	release_obj(packet_bufdesc_pool);
-	release_obj(interface);
+	OSSafeReleaseNULL(packet_bufdesc_pool);
+	OSSafeReleaseNULL(interface);
 
-	release_obj(this->pci_config_mmap);
+	OSSafeReleaseNULL(this->pci_config_mmap);
 
 	if (intr_event_source)
 	{
 		IOLog("virtio-net free(): Warning! Event source still exists, this should have been shut down by now.\n");
 		endHandlingInterrupts();
 	}
-	release_obj(work_loop);
-	release_obj(packet_memory_cursor);
+	OSSafeReleaseNULL(work_loop);
+	OSSafeReleaseNULL(packet_memory_cursor);
 	if (this->pci_dev && this->pci_dev->isOpen(this))
 		this->pci_dev->close(this);
 	this->pci_dev = NULL;
