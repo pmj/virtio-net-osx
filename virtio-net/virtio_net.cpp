@@ -1578,8 +1578,8 @@ void eu_philjordan_virtio_net::sendPacket(void *pkt, UInt32 pktSize)
 		kprintf("virtio-net sendPacket(): Driver not ready, aborting.\n");
 		return;
 	}
-	uint32_t head_desc = vring_pop_free_desc(tx_queue);
-	uint32_t main_desc = vring_pop_free_desc(tx_queue);
+	int32_t head_desc = vring_pop_free_desc(tx_queue);
+	int32_t main_desc = vring_pop_free_desc(tx_queue);
 	if (main_desc < 0)
 	{
 		if (head_desc >= 0)
