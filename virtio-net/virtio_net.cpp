@@ -410,6 +410,8 @@ enum VirtioPCIFeatureBits
 	VIRTIO_F_NOTIFY_ON_EMPTY = (1u << 24u),
 	VIRTIO_F_RING_INDIRECT_DESC = (1u << 28u),
 	VIRTIO_F_RING_EVENT_IDX = (1u << 29u),
+	
+	// the following values have disappeared from the spec between 0.9 and 0.9.5 but are kept here for logging purposes
 	VIRTIO_F_BAD_FEATURE = (1u << 30u),
 	/// "high" features are supported
 	VIRTIO_F_FEATURES_HIGH = (1u << 31u),
@@ -500,6 +502,8 @@ static void virtio_log_supported_features(uint32_t dev_features)
 	LOG_FEATURE(dev_features, VIRTIO_F_NOTIFY_ON_EMPTY);    // Supported by VBox 4.1.0
 	LOG_FEATURE(dev_features, VIRTIO_F_RING_INDIRECT_DESC);
 	LOG_FEATURE(dev_features, VIRTIO_F_RING_EVENT_IDX);
+
+	// legacy bits, no longer in the 0.9.5 spec, but log them if they do turn up
 	LOG_FEATURE(dev_features, VIRTIO_F_BAD_FEATURE);        // Must mask this out
 	LOG_FEATURE(dev_features, VIRTIO_F_FEATURES_HIGH);
 	
@@ -530,17 +534,6 @@ static void virtio_log_supported_features(uint32_t dev_features)
 	}
 }
 
-ssize_t virtio_hi_feature_bitmap_offset(uint32_t dev_features, size_t& config_offset)
-{
-	ssize_t hi_features_offset = -1;
-	if (dev_features & VIRTIO_F_FEATURES_HIGH)
-	{
-		// Has extended feature table
-		hi_features_offset = config_offset;
-		config_offset += 2 * 4;
-	}
-	return hi_features_offset;
-}
 // Helper functions for reading/writing the virtio header registers
 
 
@@ -775,7 +768,7 @@ uint32_t eu_philjordan_virtio_net::virtioResetInitAndReadFeatureBits()
 uint16_t eu_philjordan_virtio_net::virtioReadOptionalConfigFieldsGetDeviceSpecificOffset()
 {
 	assert(pci_dev);
-	assert(dev_features_lo > 0); // if the features have been read, at the very least the BAD_FEATURE bit will be set
+	assert(this->dev_feature_bitmap > 0); // if the features have been read, at the very least the BAD_FEATURE bit will be set
 	assert(this->pci_virtio_header_iomap);
 	
 	/* Read out the flexible config space */
@@ -783,14 +776,6 @@ uint16_t eu_philjordan_virtio_net::virtioReadOptionalConfigFieldsGetDeviceSpecif
 
 	// TODO: find out how to detect if MSI-X is enabled (I don't think it ever is on Mac OS X)
 	// if (msix_enabled) config_offset += 4;
-	
-	ssize_t hi_features_offset = virtio_hi_feature_bitmap_offset(dev_features_lo, config_offset);
-	dev_features_hi = 0;
-	if (hi_features_offset >= 0)
-	{
-		dev_features_hi = configReadLE32(hi_features_offset);
-		IOLog("virtio-net virtioReadOptionalConfigFieldsGetDeviceSpecificOffset(): Devices reports high feature bit mask %08X.\n", dev_features_hi);
-	}
 	
 	// wherever we are now is the offset for the device-specific configuration space
 	return config_offset;
@@ -972,7 +957,6 @@ void eu_philjordan_virtio_net::determineMACAddress(uint16_t device_specific_offs
 // check link status, if possible, and record its configuration space offset for later updates
 void eu_philjordan_virtio_net::detectLinkStatusFeature(uint16_t device_specific_offset)
 {
-	assert(dev_features_lo > 0);
 	status_field_offset = 0;
 	bool link_is_up = true;
 	if (dev_feature_bitmap & VIRTIO_NET_F_STATUS)

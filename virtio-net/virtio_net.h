@@ -321,10 +321,7 @@ protected:
 	IOMemoryMap* pci_virtio_header_iomap;
 	
 	/// The standard bit map of virtio device features
-	uint32_t dev_features_lo;
-	/// The extended bit map of virtio device features (or 0 if the high bits aren't available)
-	/** Initialised at start() by virtioReadOptionalConfigFieldsGetDeviceSpecificOffset() */
-	uint32_t dev_features_hi;
+	uint32_t dev_feature_bitmap;
 	
 	IOEthernetInterface* interface;
 	
