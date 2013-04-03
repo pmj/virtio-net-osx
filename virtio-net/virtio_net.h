@@ -154,6 +154,8 @@ public:
 	
 	virtual IOReturn selectMedium(const IONetworkMedium* medium);
 protected:
+	bool startWithIOEnabled();
+
 	/// Enable the device far enough to do debugging
 	/** Initialises with no output queue, no interrupts - that is done by the
 	 * interface version of enable().
@@ -322,6 +324,8 @@ protected:
 	
 	/// The standard bit map of virtio device features
 	uint32_t dev_feature_bitmap;
+	
+	bool should_disable_io;
 	
 	IOEthernetInterface* interface;
 	

@@ -835,6 +835,21 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 		return false;
 	work_loop->retain();
 	
+	this->should_disable_io = !pci->setIOEnable(true);
+	
+	if (!this->startWithIOEnabled())
+	{
+		if (this->should_disable_io)
+			pci->setIOEnable(false);
+		this->should_disable_io = false;
+		return false;
+	}
+	
+	return true;
+}
+
+bool eu_philjordan_virtio_net::startWithIOEnabled()
+{
 	if (!mapVirtioConfigurationSpace())
 		return false;
 	
@@ -2450,6 +2465,11 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 	virtqueue_free(tx_queue);
 	
 	OSSafeReleaseNULL(this->pci_virtio_header_iomap);
+
+	if (this->pci_dev && this->should_disable_io)
+		this->pci_dev->setIOEnable(false);
+	this->should_disable_io = false;
+
 	if (pci_dev && pci_dev->isOpen(this))
 		pci_dev->close(this);
 	this->pci_dev = NULL;
