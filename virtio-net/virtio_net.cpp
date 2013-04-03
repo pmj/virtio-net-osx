@@ -1233,7 +1233,7 @@ bool eu_philjordan_virtio_net::enablePartial()
 	// write back supported features
 	uint32_t supported_features = dev_features &
 		(VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | (feature_checksum_offload ? (VIRTIO_NET_F_CSUM | VIRTIO_NET_F_HOST_TSO4) : 0));
-	virtioHeaderWriteLE32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31, supported_features);
+	virtioHeaderWriteLE32(VIRTIO_PCI_CONF_OFFSET_GUEST_FEATURE_BITS_0_31, supported_features);
 	PJLogVerbose("virtio-net enable(): Wrote driver-supported feature bits: 0x%08X\n", supported_features);
 	
 	// tell device we're ready
