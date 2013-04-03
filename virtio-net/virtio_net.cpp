@@ -268,6 +268,11 @@ static int64_t pci_id_data_to_uint(OSObject* property_obj)
 	return id;
 }
 
+namespace
+{
+	extern const size_t VIRTIO_PCI_HEADER_MIN_LEN;
+}
+
 IOService* eu_philjordan_virtio_net::probe(IOService* provider, SInt32* score)
 {
 	PJLogVerbose("virtio-net probe()\n");
@@ -320,6 +325,28 @@ IOService* eu_philjordan_virtio_net::probe(IOService* provider, SInt32* score)
 	{
 		VIOLog("Warning: subsystem vendor ID (0x%04X) should normally match device vendor ID (0x%04X).\n", (unsigned)sub_vid, (unsigned)vid);
 	}
+
+	// check the BAR0 range is in the I/O space and has the right minimum length
+	if (0 == (1u & pci_dev->configRead32(kIOPCIConfigBaseAddress0))) // is there a higher-level way of doing this?
+	{
+		VIOLog("virtio-net probe(): BAR0 indicates the first device range is in the memory address space, this driver expects an I/O range.\n");
+		return NULL;
+	}
+	if (IODeviceMemory* header_range = pci_dev->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0))
+	{
+		size_t header_len = header_range->getLength();
+		if (header_len < VIRTIO_PCI_HEADER_MIN_LEN)
+		{
+			IOLog("virtio-net probe(): Virtio header I/O range too short. Expected at least %lu bytes, got %lu\n", VIRTIO_PCI_HEADER_MIN_LEN, header_len);
+			return NULL;
+		}
+	}
+	else
+	{
+		IOLog("virtio-net probe(): Failed to get virtio header I/O range\n");
+		return NULL;
+	}
+
 	return this;
 }
 
@@ -336,17 +363,19 @@ enum VirtioPCIHeaderOffsets
 	VIRTIO_PCI_CONF_OFFSET_END_HEADER = 1 + VIRTIO_PCI_CONF_OFFSET_ISR_STATUS
 };
 
+namespace {
+	const size_t VIRTIO_PCI_HEADER_MIN_LEN = VIRTIO_PCI_CONF_OFFSET_END_HEADER;
+}
 #define VIRTIO_PCI_DEVICE_ISR_USED 0x01
 #define VIRTIO_PCI_DEVICE_ISR_CONF_CHANGE 0x02
 
-/// Virtio Spec 0.9, section 2.2.2.1, "Device Status".
+/// Virtio Spec 0.9.5, section 2.2.2.1, "Device Status".
 /** To be used in the "Device Status" configuration field. */
 enum VirtioPCIDeviceStatus
 {
 	VIRTIO_PCI_DEVICE_STATUS_RESET = 0x00,
 	VIRTIO_PCI_DEVICE_STATUS_ACKNOWLEDGE = 0x01,
 	VIRTIO_PCI_DEVICE_STATUS_DRIVER = 0x02,
-	/* Confusingly, the spec gives BIT 3 for driver_ok and VALUE 128 (bit 8) for failed: */
 	VIRTIO_PCI_DEVICE_STATUS_DRIVER_OK = 0x04,
 	VIRTIO_PCI_DEVICE_STATUS_FAILED = 0x80
 };
