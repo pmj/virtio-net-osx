@@ -1106,7 +1106,7 @@ bool eu_philjordan_virtio_net::setupVirtqueue(
 				
 	virtqueue_init(queue, queue_buffer, queue_size, queue_id);
 
-	virtioHeaderWriteLE32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, static_cast<uint32_t>(queue_buffer->getPhysicalAddress() >> 12u));
+	virtioHeaderWriteLE32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, static_cast<uint32_t>(queue_buffer->getPhysicalSegment(0, NULL, 0) >> 12u));
 	
 	return true;
 }
@@ -1608,7 +1608,7 @@ void eu_philjordan_virtio_net::sendPacket(void *pkt, UInt32 pktSize)
 	packet->header.csum_offset = 0;
 	
 	// fill out descriptors
-	tx_queue.desc[head_desc].addr = packet->mem->getPhysicalAddress();
+	tx_queue.desc[head_desc].addr = packet->mem->getPhysicalSegment(0, NULL, 0);
 	tx_queue.desc[head_desc].len = sizeof(packet->header);
 	tx_queue.desc[head_desc].flags = VRING_DESC_F_NEXT;
 	tx_queue.desc[head_desc].next = main_desc;
@@ -1988,7 +1988,7 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 	const uint16_t direction_flag = for_writing ? VRING_DESC_F_WRITE : 0;
 	
 	vring_desc& head_buf = queue.desc[head_desc];
-	head_buf.addr = packet_mem->getPhysicalAddress() + offsetof(virtio_net_packet, header);
+	head_buf.addr = packet_mem->getPhysicalSegment(0, NULL, 0) + offsetof(virtio_net_packet, header);
 	head_buf.len = sizeof(virtio_net_hdr);
 	head_buf.flags = direction_flag;
 	head_buf.next = 0;
