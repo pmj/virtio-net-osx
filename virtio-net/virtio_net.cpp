@@ -405,6 +405,8 @@ enum VirtioPCIFeatureBits
 	VIRTIO_NET_F_CTRL_RX = (1u << 18),    // Control channel RX mode support.
 	VIRTIO_NET_F_CTRL_VLAN = (1u << 19),  // Control channel VLAN filtering.
 	
+	VIRTIO_NET_F_CTRL_RX_EXTRA = (1u << 20),  // Not in spec, "Extra RX mode control support"
+	VIRTIO_NET_F_GUEST_ANNOUNCE = (1u << 21), // Guest can send gratuitous packets (announce itself upon request)
 	
 	// generic virtio features
 	VIRTIO_F_NOTIFY_ON_EMPTY = (1u << 24u),
@@ -423,6 +425,7 @@ enum VirtioPCIFeatureBits
 		| VIRTIO_NET_F_HOST_TSO6 | VIRTIO_NET_F_HOST_ECN | VIRTIO_NET_F_HOST_UFO
 		| VIRTIO_NET_F_MRG_RXBUF | VIRTIO_NET_F_STATUS | VIRTIO_NET_F_CTRL_VQ
 		| VIRTIO_NET_F_CTRL_RX | VIRTIO_NET_F_CTRL_VLAN
+		| VIRTIO_NET_F_CTRL_RX_EXTRA | VIRTIO_NET_F_GUEST_ANNOUNCE
 		|	VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_F_RING_INDIRECT_DESC
 		| VIRTIO_F_RING_EVENT_IDX | VIRTIO_F_BAD_FEATURE | VIRTIO_F_FEATURES_HIGH
 };
@@ -499,32 +502,35 @@ static void virtio_log_supported_features(uint32_t dev_features)
 {
 	VIOLog("virtio-net: Device reports LOW feature bitmap 0x%08x.\n", dev_features);
 	VIOLog("virtio-net: Recognised generic virtio features:\n");
-	LOG_FEATURE(dev_features, VIRTIO_F_NOTIFY_ON_EMPTY);    // Supported by VBox 4.1.0
-	LOG_FEATURE(dev_features, VIRTIO_F_RING_INDIRECT_DESC);
-	LOG_FEATURE(dev_features, VIRTIO_F_RING_EVENT_IDX);
+	LOG_FEATURE(dev_features, VIRTIO_F_NOTIFY_ON_EMPTY);    // Supported by VBox 4.1.0, Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_F_RING_INDIRECT_DESC); // Supported by Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_F_RING_EVENT_IDX);     // Supported by Qemu 1.3
 
 	// legacy bits, no longer in the 0.9.5 spec, but log them if they do turn up
 	LOG_FEATURE(dev_features, VIRTIO_F_BAD_FEATURE);        // Must mask this out
 	LOG_FEATURE(dev_features, VIRTIO_F_FEATURES_HIGH);
 	
 	VIOLog("virtio-net: Recognised virtio-net specific features:\n");
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_CSUM);           // Supported by VBox 4.1.0
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_CSUM);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_MAC);            // Supported by VBox 4.1.0
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_GSO);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_TSO4);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_TSO6);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_ECN);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_UFO);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_TSO4);      // Supported by VBox 4.1.0
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_TSO6);      // Supported by VBox 4.1.0
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_ECN);
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_UFO);       // Supported by VBox 4.1.0
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_MRG_RXBUF);      // Supported by VBox 4.1.0
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_STATUS);         // Supported by VBox 4.1.0
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_CTRL_VQ);        // Supported by VBox 4.1.0
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_CTRL_RX);        // Supported by VBox 4.1.0
-	LOG_FEATURE(dev_features, VIRTIO_NET_F_CTRL_VLAN);      // Supported by VBox 4.1.0
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_CSUM);           // Supported by VBox 4.1.0, Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_CSUM);     // Supported by Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_MAC);            // Supported by VBox 4.1.0, Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_GSO);            // Supported by Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_TSO4);     // Supported by Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_TSO6);     // Supported by Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_ECN);      // Supported by Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_UFO);      // Supported by Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_TSO4);      // Supported by VBox 4.1.0, Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_TSO6);      // Supported by VBox 4.1.0, Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_ECN);       // Supported by Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_HOST_UFO);       // Supported by VBox 4.1.0, Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_MRG_RXBUF);      // Supported by VBox 4.1.0, Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_STATUS);         // Supported by VBox 4.1.0, Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_CTRL_VQ);        // Supported by VBox 4.1.0, Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_CTRL_RX);        // Supported by VBox 4.1.0, Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_CTRL_VLAN);      // Supported by VBox 4.1.0, Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_CTRL_RX_EXTRA);  // Supported by Qemu 1.3
+	LOG_FEATURE(dev_features, VIRTIO_NET_F_GUEST_ANNOUNCE);
+
 	
 	
 	uint32_t unrecognised = dev_features & ~static_cast<uint32_t>(VIRTIO_ALL_KNOWN_FEATURES);
