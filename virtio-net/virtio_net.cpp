@@ -1470,20 +1470,20 @@ IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 
 void eu_philjordan_virtio_net::disablePartial()
 {
-	// disable the device to stop any more interrupts from occurring
-	virtioResetDevice();
-	// unmap and close device
-	OSSafeReleaseNULL(this->pci_virtio_header_iomap);
-	pci_dev->close(this);
-
-	endHandlingInterrupts();
-
+	PJLogVerbose("virtio-net disablePartial()\n");
 	handleReceivedPackets();
 	releaseSentPackets();
-	
+
+	// disable the device to stop any more interrupts from occurring
+	virtioResetDevice();
+
 	// free any remaining packet resources
 	clearVirtqueuePackets(rx_queue);
 	clearVirtqueuePackets(tx_queue);
+
+	// unmap and close device
+	OSSafeReleaseNULL(this->pci_virtio_header_iomap);
+	pci_dev->close(this);
 	
 	// Free any pooled packet headers
 	packet_bufdesc_pool->flushCollection();
@@ -1493,6 +1493,7 @@ void eu_philjordan_virtio_net::disablePartial()
 	virtqueue_free(tx_queue);
 	
 	driver_state = kDriverStateStarted;
+	PJLogVerbose("virtio-net disablePartial() done\n");
 }
 
 
@@ -2447,6 +2448,29 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 	PJLogVerbose("virtio-net stop()\n");
 	if (provider != this->pci_dev)
 		VIOLog("Warning: stopping virtio-net with a different provider!?\n");
+
+	if (interface)
+	{
+		detachInterface(interface, true);
+	}
+	if (driver_state == kDriverStateEnabled || driver_state == kDriverStateEnabledBoth)
+	{
+		VIOLog("virtio-net stop(): Warning! Device is still enabled. Disabling it.\n");
+		disable(interface);
+	}
+	
+	if (debugger)
+	{
+		detachDebuggerClient(debugger);
+		debugger = NULL;
+	}
+
+	// we don't want interrupt handlers trying to dereference any zeroed or dangling pointers, so make sure they're off
+	if (intr_event_source)
+	{
+		VIOLog("virtio-net stop(): Warning! Event source still exists, this should have been shut down by now.\n");
+		endHandlingInterrupts();
+	}
 	
 	if (debugger_transmit_packet)
 	{
@@ -2457,20 +2481,14 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 			debugger_transmit_packet->mem->release();
 		debugger_transmit_packet = NULL;
 	}
-	
-	if (driver_state == kDriverStateEnabled)
+
+	if (driver_state == kDriverStateEnabled || driver_state == kDriverStateEnabledBoth || driver_state == kDriverStateEnabledDebugging)
 	{
-		VIOLog("virtio-net stop(): Warning! Device is still enabled. Disabling it.\n");
-		disable(interface);
+		disablePartial();
 	}
 		
-	if (intr_event_source)
-	{
-		VIOLog("virtio-net stop(): Warning! Event source still exists, this should have been shut down by now.\n");
-		endHandlingInterrupts();
-	}
-	
-	packet_bufdesc_pool->flushCollection();
+	if (packet_bufdesc_pool)
+		packet_bufdesc_pool->flushCollection();
 	OSSafeReleaseNULL(interface);
 	clearVirtqueuePackets(rx_queue);
 	clearVirtqueuePackets(tx_queue);
@@ -2488,7 +2506,9 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 	this->pci_dev = NULL;
 	driver_state = kDriverStateStopped;
 	
+	PJLogVerbose("virtio-net end stop()\n");
 	super::stop(provider);
+	PJLogVerbose("virtio-net end super::stop()\n");
 }
 
 void eu_philjordan_virtio_net::free()
@@ -2496,7 +2516,6 @@ void eu_philjordan_virtio_net::free()
 	PJLogVerbose("virtio-net free()\n");
 	
 	OSSafeReleaseNULL(packet_bufdesc_pool);
-	OSSafeReleaseNULL(interface);
 
 	OSSafeReleaseNULL(this->pci_virtio_header_iomap);
 
