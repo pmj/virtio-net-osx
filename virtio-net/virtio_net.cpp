@@ -1340,7 +1340,7 @@ IOReturn eu_philjordan_virtio_net::gatedEnableInterface(IONetworkInterface* inte
 		VIOLog("virtio-net enable(): Bad driver state %d (expected %d or %d), aborting.\n", driver_state, kDriverStateStarted, kDriverStateEnabledDebugging);
 		return kIOReturnInvalid;
 	}
-	bool debugger = kDriverStateEnabledDebugging;
+	bool has_debugger = (driver_state == kDriverStateEnabledDebugging);
 	if (driver_state != kDriverStateEnabledDebugging)
 		driver_state = kDriverStateEnableFailed;
 	if (interface != this->interface)
@@ -1379,7 +1379,7 @@ IOReturn eu_philjordan_virtio_net::gatedEnableInterface(IONetworkInterface* inte
 	
 	updateLinkStatus();
 	
-	driver_state = debugger ? kDriverStateEnabledBoth : kDriverStateEnabled;
+	driver_state = has_debugger ? kDriverStateEnabledBoth : kDriverStateEnabled;
 
 	return kIOReturnSuccess;
 }
