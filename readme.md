@@ -5,8 +5,14 @@
 Some virtualisation environments, namely Linux KVM/Qemu and VirtualBox support
 high-performance paravirtualised devices that follow the "Virtio" specification.
 This is a driver for using the virtio ethernet device from OS X guests.
+In VirtualBox, this device is known as the "Paravirtualised Network (virtio-net)".
 
 ## News
+
+**22 December 2013:** I have updated the driver to version 0.9.4 (Beta 3) with some bug fixes and stability
+improvements. In particular, it is now possible to safely unload the driver at
+runtime, using `kextunload /System/Library/Extensions/virtio-net.kext`. This is
+useful for upgrading to newer versions without rebooting.
 
 Version 0.9.2 was released over one and a half years ago, and I haven't made any
 updates since, as it has worked fine.

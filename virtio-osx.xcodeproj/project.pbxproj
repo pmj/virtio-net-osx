@@ -235,14 +235,14 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 0.9.3b1;
+				CURRENT_PROJECT_VERSION = 0.9.4b3;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_ENABLE_OBJC_EXCEPTIONS = YES;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "virtio-net/virtio-net-Prefix.pch";
 				INFOPLIST_FILE = "virtio-net/virtio-net-Info.plist";
 				MODULE_NAME = eu.philjordan.virtio_net;
-				MODULE_VERSION = 0.9.3b1;
+				MODULE_VERSION = 0.9.4b3;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				WRAPPER_EXTENSION = kext;
 			};
@@ -253,14 +253,14 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				COPY_PHASE_STRIP = YES;
-				CURRENT_PROJECT_VERSION = 0.9.3b1;
+				CURRENT_PROJECT_VERSION = 0.9.4b3;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				GCC_ENABLE_OBJC_EXCEPTIONS = YES;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "virtio-net/virtio-net-Prefix.pch";
 				INFOPLIST_FILE = "virtio-net/virtio-net-Info.plist";
 				MODULE_NAME = eu.philjordan.virtio_net;
-				MODULE_VERSION = 0.9.3b1;
+				MODULE_VERSION = 0.9.4b3;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				WRAPPER_EXTENSION = kext;
 			};

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>BuildMachineOSBuild</key>
-	<string>10K540</string>
+	<string>12F45</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
 	<key>CFBundleExecutable</key>
@@ -17,25 +17,25 @@
 	<key>CFBundlePackageType</key>
 	<string>KEXT</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.9.2</string>
+	<string>0.9.4b3</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleVersion</key>
-	<string>0.9.2</string>
+	<string>0.9.4b3</string>
 	<key>DTCompiler</key>
-	<string>com.apple.compilers.llvmgcc42</string>
+	<string></string>
 	<key>DTPlatformBuild</key>
-	<string>4A2002a</string>
+	<string>4H1503</string>
 	<key>DTPlatformVersion</key>
 	<string>GM</string>
 	<key>DTSDKBuild</key>
-	<string>4A2002a</string>
+	<string>12D75</string>
 	<key>DTSDKName</key>
-	<string>macosx10.6</string>
+	<string>macosx10.8</string>
 	<key>DTXcode</key>
-	<string>0402</string>
+	<string>0463</string>
 	<key>DTXcodeBuild</key>
-	<string>4A2002a</string>
+	<string>4H1503</string>
 	<key>IOKitPersonalities</key>
 	<dict>
 		<key>VirtioNet</key>
@@ -57,7 +57,7 @@
 		</dict>
 	</dict>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2011 Phil Jordan. Triple-licensed under the zLib license, the 3-Clause BSD License and the MIT license. Portions Copyright © 2007, 2009, IBM	 Corporation and 2011, Red Hat, Inc. 3-clause BSD license.</string>
+	<string>Copyright © 2011, 2013 Phil Jordan. Released under the GNU Lesser General Public License Version 3 (LGPLv3). Portions Copyright © 2007, 2009, IBM	 Corporation and 2011, Red Hat, Inc.</string>
 	<key>OSBundleLibraries</key>
 	<dict>
 		<key>com.apple.iokit.IONetworkingFamily</key>

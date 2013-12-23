@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<installer-gui-script minSpecVersion="1">
+    <title>Virtio-net OS X Driver</title>
+    <welcome file="Welcome.rtf"/>
+    <license file="License.rtf"/>
+    <pkg-ref id="eu.philjordan.virtio-net"/>
+    <options customize="never" require-scripts="false"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="eu.philjordan.virtio-net"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="eu.philjordan.virtio-net" visible="false">
+        <pkg-ref id="eu.philjordan.virtio-net"/>
+    </choice>
+    <pkg-ref id="eu.philjordan.virtio-net" version="0.9.4" onConclusion="none">virtio-net-driver.pkg</pkg-ref>
+</installer-gui-script>
