@@ -50,20 +50,26 @@ OSDefineMetaClassAndStructors(eu_philjordan_virtio_net, IOEthernetController);
 #define super IOEthernetController
 
 //#define PJ_VIRTIO_NET_VERBOSE
-#define VIOLog kprintf
+#define VIOLog IOLog
 
 
 #ifndef PJ_VIRTIO_NET_VERBOSE
-#define PJLogVerbose(...)
+#define PJLogVerbose(...) ({ (void)0; })
 #else
 #define PJLogVerbose(...) VIOLog(__VA_ARGS__)
 #endif
+
+/*
+#undef OSSafeReleaseNULL
+#define OSSafeReleaseNULL(inst)   do { if (inst) { if (inst->getRetainCount() == 1) { VIOLog("virtio-net OSSafeReleaseNULL %s:%u: releasing %p (%lu+ bytes)\n", __FILE__, __LINE__, (inst), sizeof(*(inst))); } (inst)->release(); } (inst) = NULL; } while (0)
+//*/
 
 template <typename T> static T* PJZMallocArray(size_t length)
 {
 	const size_t bytes = sizeof(T) * length;
 	void* const mem = IOMalloc(bytes);
 	if (!mem) return NULL;
+	PJLogVerbose("virtio-net: allocated %lu bytes at %p\n", bytes, mem);
 	memset(mem, 0, bytes);
 	return static_cast<T*>(mem);
 }
@@ -71,6 +77,7 @@ template <typename T> static T* PJZMallocArray(size_t length)
 template <typename T> static void PJFreeArray(T* array, size_t length)
 {
 	const size_t bytes = sizeof(T) * length;
+	PJLogVerbose("virtio-net: freeing %lu bytes at %p\n", bytes, array);
 	IOFree(array, bytes);
 }
 
@@ -134,8 +141,16 @@ static void virtio_net_log_property_dict(OSDictionary* props)
 	VIOLog("virtio-net: end property dictionary\n");
 }
 
+#ifdef VIRTIO_NET_SINGLE_INSTANCE
+static SInt32 instances = 0;
+#endif
+
 bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 {
+#ifdef VIRTIO_NET_SINGLE_INSTANCE
+	if (OSIncrementAtomic(&instances) > 0)
+		return false;
+#endif
 	static bool has_shown_copyright_notice = false;
 	if (!has_shown_copyright_notice)
 	{
@@ -2490,6 +2505,10 @@ void eu_philjordan_virtio_net::free()
 	if (this->pci_dev && this->pci_dev->isOpen(this))
 		this->pci_dev->close(this);
 	this->pci_dev = NULL;
+	
+#ifdef VIRTIO_NET_SINGLE_INSTANCE
+	OSDecrementAtomic(&instances);
+#endif
 
 	super::free();
 }
