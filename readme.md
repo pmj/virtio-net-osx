@@ -7,6 +7,13 @@ high-performance paravirtualised devices that follow the "Virtio" specification.
 This is a driver for using the virtio ethernet device from OS X guests.
 In VirtualBox, this device is known as the "Paravirtualised Network (virtio-net)".
 
+## Quick Start
+
+Download the latest [virtio-net driver installer](https://github.com/pmj/virtio-net-osx/raw/master/bin/Virtio-Net-Driver-0.9.4.pkg)
+to your VirtualBox or Qemu virtual machine running OS X 10.7 or newer. Run the
+installer. If your VM has any virtio-net devices enabled, they should now
+spring into life!
+
 ## News
 
 **22 December 2013:** I have updated the driver to version 0.9.4 (Beta 3) with some bug fixes and stability
@@ -14,9 +21,9 @@ improvements. In particular, it is now possible to safely unload the driver at
 runtime, using `kextunload /System/Library/Extensions/virtio-net.kext`. This is
 useful for upgrading to newer versions without rebooting.
 
-Version 0.9.2 was released over one and a half years ago, and I haven't made any
-updates since, as it has worked fine.
-However, as I am now (March 2013) also using KVM, I'm strongly considering implementing drivers
+Version 0.9.2 was released in 2011, and the updates since have been bug fixes
+rather than feature enhancements.
+However, as I am now also using KVM, I'm strongly considering implementing drivers
 for more devices in the Virtio family and beyond. Of particular interest are:
 
  * **Memory Balloon** - For dynamically varying the amount of memory assigned to the virtual machine.
@@ -28,7 +35,7 @@ as well as SSDs. The virtio SCSI device even supports hotplugging.
  * **SPICE/qxl virtualised graphics adapter and desktop integration** - Implementing a driver for this will
 offer better desktop integration (native mouse cursor and resizeable VM window)
 and eventually, it might offer better graphics performance, clipboard integration,
-etc.
+etc. This isn't technically based on virtio, though.
  * **9P** - This is for sharing parts of the host's file system with the guest OS.
  * **Network** - The virtio-net implementation in KVM is much higher performance
 and supports more features than VirtualBox's. This driver currently doesn't even 
@@ -43,7 +50,7 @@ that the other drivers can be built upon the virtqueues.
 
 ## Latest release
 
-The current release is version 0.9.2 (the third beta for the 1.0), which includes support
+The current release is version 0.9.4 (the third beta for the 1.0), which includes support
 for message signaled interrupts (they are not available on VirtualBox unfortunately),
 and offloaded checksumming and TCP segmentation for IPv4. Transmit speeds with TSO are
 now on par with receive speeds and easily outperform the emulated Intel gigabit
@@ -51,17 +58,21 @@ adapter.
 
 Binaries (and the installer) are in the bin/ directory.
 
-Version 0.9.2 works with both the VirtualBox and Qemu/KVM implementations of the
-virtio network device, and is known to work with OS X 10.6 (Snow Leopard) through
-10.8.x (Mountain Lion), with both 32-bit and 64-bit kernels. Other versions may
-work, but have not been tested.
+Version 0.9.4 works with both the VirtualBox and Qemu/KVM implementations of the
+virtio network device, and is known to work with OS X 10.7 (Snow öLeopard) through
+10.9.x (Mavericks/Sea Lion), with both 32-bit and 64-bit kernels.
+
+It might also run on 10.6 (it certainly will if you build it against the 10.6
+SDK with no modification). I have had success reports with 10.5 with some
+modifications. I am planning to incorporate those changes once I have modularised
+the PCI code out from the network code.
 
 ## Summary
 
 Some virtualisation software (I know of VirtualBox and Linux KVM/Qemu) implements
 paravirtual hardware per the "virtio" specification. One type of virtio device
 is the "virtio-net" ethernet adapter. Linux and Windows guest drivers exist for
-it, but as far as I know, this is the only such driver for Mac OS X (10.5+).
+it, but as far as I know, this is the only such driver for Mac OS X (10.6+).
 
 Compared to the default emulated Intel gigabit device, the paravirtualised adapter
 in VirtualBox is approximately twice as fast at transmitting TCP data (with TSO), and about 4
@@ -168,15 +179,8 @@ Leopard.
 
 ## License
 
-I'm making the source code for this driver available under the [zLib license][zlib],
-the [3-clause BSD license][bsd3] and the [MIT License][mit]. The `virtio_ring.h`
-file is adapted from the virtio spec and 3-clause BSD licensed. I've added the
-MIT license in the hope that this will help inclusion into VirtualBox proper.
+I'm making the source code for this driver available under the [LGPL Version 3][lgpl].
+The `virtio_ring.h`
+file is adapted from the virtio spec and 3-clause BSD licensed.
 
-[virtio]: http://ozlabs.org/~rusty/virtio-spec/
-
-[bsd3]: http://www.opensource.org/licenses/BSD-3-Clause
-
-[zlib]: http://www.opensource.org/licenses/zLib
-
-[mit]: http://www.opensource.org/licenses/MIT
+[lgpl](http://www.gnu.org/licenses/lgpl.html)
