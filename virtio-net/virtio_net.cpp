@@ -1398,8 +1398,15 @@ void eu_philjordan_virtio_net::clearVirtqueuePackets(virtio_net_virtqueue& queue
 			continue;
 
 		if (packet->mbuf)
+		{
 			freePacket(packet->mbuf);
-		OSSafeReleaseNULL(packet->mem);
+			packet->mbuf = NULL;
+		}
+		PJLogVerbose("clearVirtqueuePackets (queue %p): Freeing packet buffer %p (%llu bytes) - descriptor %p\n", &queue, packet, packet->mem ? packet->mem->getLength() : 0, packet->mem);
+		IOBufferMemoryDescriptor* md = packet->mem;
+		memset(packet, 0, sizeof(*packet));
+		if (md)
+			md->release();
 		
 		queue.packets_for_descs[i] = NULL;
 	}
