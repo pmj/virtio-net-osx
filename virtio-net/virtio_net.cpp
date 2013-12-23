@@ -1662,6 +1662,7 @@ void eu_philjordan_virtio_net::sendPacket(void *pkt, UInt32 pktSize)
 	tx_queue.avail->idx = ++avail_idx;
 	notifyQueueAvailIdx(tx_queue, avail_idx);
 	
+	unsigned wait_us = 1;
 	while (true)
 	{
 		// this means no other thread/interrupt has detected the packet as sent, so let's keep polling it ourselves
@@ -1678,7 +1679,9 @@ void eu_philjordan_virtio_net::sendPacket(void *pkt, UInt32 pktSize)
 				break;
 			}
 		}
-		IODelay(20);
+		IODelay(wait_us);
+		if (wait_us < 10000)
+			++wait_us;
 		OSSynchronizeIO();
 	}
 	
