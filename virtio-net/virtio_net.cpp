@@ -1058,6 +1058,7 @@ void eu_philjordan_virtio_net::endHandlingInterrupts()
 		return;
 	}
 	
+	this->intr_event_source->disable();
 	work_loop->removeEventSource(intr_event_source);
 	OSSafeReleaseNULL(intr_event_source);
 }
