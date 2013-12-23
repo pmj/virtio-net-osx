@@ -43,7 +43,7 @@
 		</dict>
 	</dict>
 	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2011 Phil Jordan. Triple-licensed under the zLib license, the 3-Clause BSD License and the MIT license. Portions Copyright © 2007, 2009, IBM	 Corporation and 2011, Red Hat, Inc. 3-clause BSD license.</string>
+	<string>Copyright © 2011, 2013 Phil Jordan. Triple-licensed under the zLib license, the 3-Clause BSD License and the MIT license. Portions Copyright © 2007, 2009, IBM	 Corporation and 2011, Red Hat, Inc. 3-clause BSD license.</string>
 	<key>OSBundleLibraries</key>
 	<dict>
 		<key>com.apple.iokit.IONetworkingFamily</key>
