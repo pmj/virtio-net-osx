@@ -600,6 +600,8 @@ void eu_philjordan_virtio_net::failDevice()
 {
 	if (pci_dev)
 	{
+		if (this->intr_event_source)
+			endHandlingInterrupts();
 		if (this->pci_virtio_header_iomap)
 		{
 			updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_FAILED);
@@ -1265,9 +1267,6 @@ bool eu_philjordan_virtio_net::enablePartial()
 	PJLogVerbose("virtio-net enable(): Populated receive buffers: %u free descriptors left, avail idx %u\n",
 		rx_queue.num_free_desc, rx_queue.avail->idx);
 
-	// start handling interrupts now that the internal data structures are set up
-	if (!beginHandlingInterrupts())
-		return failDevice(), false;
 	return true;
 }
 
@@ -1363,6 +1362,10 @@ IOReturn eu_philjordan_virtio_net::gatedEnableInterface(IONetworkInterface* inte
 		return kIOReturnNoMemory;
 	}
 
+	// start handling interrupts now that the internal data structures are set up
+	if (!beginHandlingInterrupts())
+		return failDevice(), false;
+
 	// enable interrupts on the appropriate queues
 	rx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
 	if (!feature_notify_on_empty)
@@ -1447,6 +1450,9 @@ IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 	rx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
 	if (!feature_notify_on_empty)
 		tx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
+
+	// interrupts not needed for debugger-only operation
+	endHandlingInterrupts();
 
 	if (driver_state == kDriverStateEnabledBoth)
 	{
