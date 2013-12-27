@@ -20,6 +20,8 @@
 
 
 #include "virtio_net.h"
+#include "PJMbufMemoryDescriptor.h"
+#include "SSDCMultiSubrangeMemoryDescriptor.h"
 #include <IOKit/pci/IOPCIDevice.h>
 #include "virtio_ring.h"
 #include <IOKit/IOBufferMemoryDescriptor.h>
@@ -27,6 +29,7 @@
 #include <IOKit/network/IOEthernetInterface.h>
 #include <IOKit/network/IOGatedOutputQueue.h>
 #include <IOKit/network/IOMbufMemoryCursor.h>
+#include <IOKit/IODMACommand.h>
 #include <IOKit/IOFilterInterruptEventSource.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
@@ -46,7 +49,7 @@
 #define PRId64 "lld"
 #endif
 
-OSDefineMetaClassAndStructors(eu_philjordan_virtio_net, IOEthernetController);
+OSDefineMetaClassAndStructors(PJVirtioNet, IOEthernetController);
 #define super IOEthernetController
 
 //#define PJ_VIRTIO_NET_VERBOSE
@@ -145,7 +148,7 @@ static void virtio_net_log_property_dict(OSDictionary* props)
 static SInt32 instances = 0;
 #endif
 
-bool eu_philjordan_virtio_net::init(OSDictionary* properties)
+bool PJVirtioNet::init(OSDictionary* properties)
 {
 #ifdef VIRTIO_NET_SINGLE_INSTANCE
 	if (OSIncrementAtomic(&instances) > 0)
@@ -164,24 +167,7 @@ bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 	bool ok = super::init(properties);
 	if (!ok)
 		return false;
-	
-	OSNumber* max_tx_segments_val = NULL;
-	if (properties && ((max_tx_segments_val = OSDynamicCast(OSNumber, properties->getObject("PJVirtioMaxTransmitDataSegments")))))
-	{
-		if (max_tx_segments_val->unsigned64BitValue() > UINT16_MAX)
-			pref_max_tx_data_segs = UINT16_MAX;
-		else
-			pref_max_tx_data_segs = max_tx_segments_val->unsigned64BitValue();
-		if (pref_max_tx_data_segs < 1)
-			pref_max_tx_data_segs = 1;
-		VIOLog("virtio-net: Maximum number of transmit data segments set to %u\n", pref_max_tx_data_segs);
-	}
-	else
-	{
-		pref_max_tx_data_segs = pref_max_tx_data_segs_default;
-		VIOLog("virtio-net: Maximum number of transmit data segments defaulted to %u\n", pref_max_tx_data_segs);
-	}
-	
+		
 	OSBoolean* allow_offloading_val = NULL;
 	if (properties && ((allow_offloading_val = OSDynamicCast(OSBoolean, properties->getObject("PJVirtioNetAllowOffloading")))))
 	{
@@ -200,15 +186,7 @@ bool eu_philjordan_virtio_net::init(OSDictionary* properties)
 	packet_bufdesc_pool = OSSet::withCapacity(16);
 	if (!packet_bufdesc_pool)
 		return false;
-	
-	packet_memory_cursor = new IOMbufMemoryCursor();
-	if (!packet_memory_cursor || !packet_memory_cursor->initWithSpecification(outputPacketSegment, UINT32_MAX, tx_queue.num - 1))
-	{
-		VIOLog("virtio-net init(): Failed to %s memory cursor.\n", packet_memory_cursor ? "initialise" : "allocate");
-		OSSafeReleaseNULL(packet_memory_cursor);
-		return false;
-	}
-	
+		
 	pci_dev = NULL;
 	rx_queue.buf = NULL;
 	this->pci_virtio_header_iomap = NULL;
@@ -239,7 +217,7 @@ namespace
 	extern const size_t VIRTIO_PCI_HEADER_MIN_LEN;
 }
 
-IOService* eu_philjordan_virtio_net::probe(IOService* provider, SInt32* score)
+IOService* PJVirtioNet::probe(IOService* provider, SInt32* score)
 {
 	PJLogVerbose("virtio-net probe()\n");
 	IOPCIDevice* pci_dev = OSDynamicCast(IOPCIDevice, provider);
@@ -437,6 +415,14 @@ struct virtio_net_packet
 	mbuf_t mbuf;
 	// The memory descriptor holding this packet structure
 	IOBufferMemoryDescriptor* mem;
+	/// Memory descriptor for the mbuf's data
+	PJMbufMemoryDescriptor* mbuf_md;
+	/// Memory descriptor combining the tx/rx header buffer and mbuf
+	SSDCMultiSubrangeMemoryDescriptor* dma_md;
+	
+	IODMACommand* dma_cmd;
+	
+	SSDCMemoryDescriptorSubrange dma_md_subranges[2];
 };
 
 
@@ -509,60 +495,60 @@ static void virtio_log_supported_features(uint32_t dev_features)
 // Helper functions for reading/writing the virtio header registers
 
 
-void eu_philjordan_virtio_net::virtioHeaderWrite8(uint16_t offset, uint8_t val)
+void PJVirtioNet::virtioHeaderWrite8(uint16_t offset, uint8_t val)
 {
 	pci_dev->ioWrite8(offset, val, pci_virtio_header_iomap);
 }
-void eu_philjordan_virtio_net::virtioHeaderWrite16(uint16_t offset, uint16_t val)
+void PJVirtioNet::virtioHeaderWrite16(uint16_t offset, uint16_t val)
 {
 	pci_dev->ioWrite16(offset, val, pci_virtio_header_iomap);
 }
-void eu_philjordan_virtio_net::virtioHeaderWrite32(uint16_t offset, uint32_t val)
+void PJVirtioNet::virtioHeaderWrite32(uint16_t offset, uint32_t val)
 {
 	pci_dev->ioWrite32(offset, val, pci_virtio_header_iomap);
 }
-uint8_t eu_philjordan_virtio_net::virtioHeaderRead8(uint16_t offset)
+uint8_t PJVirtioNet::virtioHeaderRead8(uint16_t offset)
 {
 	return pci_dev->ioRead8(offset, pci_virtio_header_iomap);
 }
-uint16_t eu_philjordan_virtio_net::virtioHeaderRead16(uint16_t offset)
+uint16_t PJVirtioNet::virtioHeaderRead16(uint16_t offset)
 {
 	return pci_dev->ioRead16(offset, pci_virtio_header_iomap);
 }
-uint32_t eu_philjordan_virtio_net::virtioHeaderRead32(uint16_t offset)
+uint32_t PJVirtioNet::virtioHeaderRead32(uint16_t offset)
 {
 	return pci_dev->ioRead32(offset, pci_virtio_header_iomap);
 }
 
-void eu_philjordan_virtio_net::virtioHeaderWriteLE32(uint16_t offset, uint32_t val)
+void PJVirtioNet::virtioHeaderWriteLE32(uint16_t offset, uint32_t val)
 {
 	virtioHeaderWrite32(offset, OSSwapHostToLittleInt32(val));
 }
-uint32_t eu_philjordan_virtio_net::virtioHeaderReadLE32(uint16_t offset)
+uint32_t PJVirtioNet::virtioHeaderReadLE32(uint16_t offset)
 {
 	return OSSwapLittleToHostInt32(virtioHeaderRead32(offset));
 }
-void eu_philjordan_virtio_net::virtioHeaderWriteLE16(uint16_t offset, uint16_t val)
+void PJVirtioNet::virtioHeaderWriteLE16(uint16_t offset, uint16_t val)
 {
 	virtioHeaderWrite16(offset, OSSwapHostToLittleInt16(val));
 }
-uint16_t eu_philjordan_virtio_net::virtioHeaderReadLE16(uint16_t offset)
+uint16_t PJVirtioNet::virtioHeaderReadLE16(uint16_t offset)
 {
 	return OSSwapLittleToHostInt16(virtioHeaderRead16(offset));
 }
 
 
-void eu_philjordan_virtio_net::setVirtioDeviceStatus(uint8_t status)
+void PJVirtioNet::setVirtioDeviceStatus(uint8_t status)
 {
 	virtioHeaderWrite8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, status);
 }
-void eu_philjordan_virtio_net::updateVirtioDeviceStatus(uint8_t status)
+void PJVirtioNet::updateVirtioDeviceStatus(uint8_t status)
 {
 	uint8_t old_status = virtioHeaderRead8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS);
 	setVirtioDeviceStatus(status | old_status);
 }
 
-void eu_philjordan_virtio_net::failDevice()
+void PJVirtioNet::failDevice()
 {
 	if (pci_dev)
 	{
@@ -577,10 +563,10 @@ void eu_philjordan_virtio_net::failDevice()
 	}
 }
 
-bool eu_philjordan_virtio_net::interruptFilter(OSObject* me, IOFilterInterruptEventSource* source)
+bool PJVirtioNet::interruptFilter(OSObject* me, IOFilterInterruptEventSource* source)
 {
 	// deliberately minimalistic function, as it will be called from an interrupt
-	eu_philjordan_virtio_net* virtio_net = OSDynamicCast(eu_philjordan_virtio_net, me);
+	PJVirtioNet* virtio_net = OSDynamicCast(PJVirtioNet, me);
 	if (!virtio_net || source != virtio_net->intr_event_source)
 		return false; // this isn't really for us
 	
@@ -603,16 +589,16 @@ bool eu_philjordan_virtio_net::interruptFilter(OSObject* me, IOFilterInterruptEv
 	return false;
 }
 
-void eu_philjordan_virtio_net::interruptAction(OSObject* me, IOInterruptEventSource* source, int count)
+void PJVirtioNet::interruptAction(OSObject* me, IOInterruptEventSource* source, int count)
 {
-	eu_philjordan_virtio_net* virtio_net = OSDynamicCast(eu_philjordan_virtio_net, me);
+	PJVirtioNet* virtio_net = OSDynamicCast(PJVirtioNet, me);
 	if (!virtio_net || source != virtio_net->intr_event_source)
 		return;
 	
 	virtio_net->interruptAction(source, count);
 }
 
-bool eu_philjordan_virtio_net::updateLinkStatus()
+bool PJVirtioNet::updateLinkStatus()
 {
 	// Link status may have changed
 	int32_t status = readStatus();
@@ -626,7 +612,7 @@ bool eu_philjordan_virtio_net::updateLinkStatus()
 	return link_is_up;
 }
 
-void eu_philjordan_virtio_net::interruptAction(IOInterruptEventSource* source, int count)
+void PJVirtioNet::interruptAction(IOInterruptEventSource* source, int count)
 {
 	//VIOLog("Last ISR value: 0x%02X\n", last_isr);
 	uint8_t unknown_isr = last_isr & ~(VIRTIO_PCI_DEVICE_ISR_USED | VIRTIO_PCI_DEVICE_ISR_CONF_CHANGE);
@@ -702,7 +688,7 @@ static void virtio_net_log_bad_provider(IOService* provider)
 	VIOLog("virtio-net start(): Provider (%p) has wrong type: %s (expected IOPCIDevice)\n", provider, meta->getClassName());
 }
 
-bool eu_philjordan_virtio_net::mapVirtioConfigurationSpace()
+bool PJVirtioNet::mapVirtioConfigurationSpace()
 {
 	assert(pci_dev);
 	PJLogVerbose("virtio-net mapConfigurationSpace(): attempting to map device memory with register 0\n");
@@ -718,14 +704,14 @@ bool eu_philjordan_virtio_net::mapVirtioConfigurationSpace()
 	return true;
 }
 
-void eu_philjordan_virtio_net::virtioResetDevice()
+void PJVirtioNet::virtioResetDevice()
 {
 	assert(pci_dev);
 	assert(this->pci_virtio_header_iomap);
 	setVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_RESET);
 }
 
-uint32_t eu_philjordan_virtio_net::virtioResetInitAndReadFeatureBits()
+uint32_t PJVirtioNet::virtioResetInitAndReadFeatureBits()
 {
 	assert(pci_dev);
 	assert(this->pci_virtio_header_iomap);
@@ -739,7 +725,7 @@ uint32_t eu_philjordan_virtio_net::virtioResetInitAndReadFeatureBits()
 	return dev_feature_bitmap;
 }
 
-uint16_t eu_philjordan_virtio_net::virtioReadOptionalConfigFieldsGetDeviceSpecificOffset()
+uint16_t PJVirtioNet::virtioReadOptionalConfigFieldsGetDeviceSpecificOffset()
 {
 	assert(pci_dev);
 	assert(this->dev_feature_bitmap > 0); // if the features have been read, at the very least the BAD_FEATURE bit will be set
@@ -755,14 +741,14 @@ uint16_t eu_philjordan_virtio_net::virtioReadOptionalConfigFieldsGetDeviceSpecif
 	return config_offset;
 }
 
-UInt32 eu_philjordan_virtio_net::getFeatures() const
+UInt32 PJVirtioNet::getFeatures() const
 {
 	if (driver_state == kDriverStateInitial)
 		VIOLog("virtio-net getFeatures(): Warning! System asked about driver features before they could be detected.\n");
 	return (feature_tso_v4 ? kIONetworkFeatureTSOIPv4 : 0);
 }
 
-bool eu_philjordan_virtio_net::start(IOService* provider)
+bool PJVirtioNet::start(IOService* provider)
 {
 	PJLogVerbose("virtio-net start(%p)\n", provider);
 	if (driver_state != kDriverStateInitial)
@@ -822,7 +808,7 @@ bool eu_philjordan_virtio_net::start(IOService* provider)
 	return true;
 }
 
-bool eu_philjordan_virtio_net::startWithIOEnabled()
+bool PJVirtioNet::startWithIOEnabled()
 {
 	if (!mapVirtioConfigurationSpace())
 		return false;
@@ -886,12 +872,11 @@ bool eu_philjordan_virtio_net::startWithIOEnabled()
 	// now try to set up the debugger
 	// allocate a reserved packet for transmission so we don't have to allocate in sendPacket()
 	mbuf_t packet_mbuf = allocatePacket(kIOEthernetMaxPacketSize);
-	IOBufferMemoryDescriptor* packet_mem = packet_mbuf ? allocPacketHeaderBuffer() : NULL;
+	virtio_net_packet* packet_mem = packet_mbuf ? allocPacket() : NULL;
 	if (packet_mem)
 	{
-		debugger_transmit_packet = static_cast<virtio_net_packet*>(packet_mem->getBytesNoCopy());
+		debugger_transmit_packet = packet_mem;
 		debugger_transmit_packet->mbuf = packet_mbuf;
-		debugger_transmit_packet->mem = packet_mem;
 	}
 	else if (packet_mbuf)
 	{
@@ -911,7 +896,7 @@ bool eu_philjordan_virtio_net::startWithIOEnabled()
 	return true;
 }
 
-void eu_philjordan_virtio_net::determineMACAddress(uint16_t device_specific_offset)
+void PJVirtioNet::determineMACAddress(uint16_t device_specific_offset)
 {
 	// sort out mac address
 	if (dev_feature_bitmap & VIRTIO_NET_F_MAC)
@@ -944,7 +929,7 @@ void eu_philjordan_virtio_net::determineMACAddress(uint16_t device_specific_offs
 }
 
 // check link status, if possible, and record its configuration space offset for later updates
-void eu_philjordan_virtio_net::detectLinkStatusFeature(uint16_t device_specific_offset)
+void PJVirtioNet::detectLinkStatusFeature(uint16_t device_specific_offset)
 {
 	status_field_offset = 0;
 	bool link_is_up = true;
@@ -959,7 +944,7 @@ void eu_philjordan_virtio_net::detectLinkStatusFeature(uint16_t device_specific_
 	setLinkStatus((link_is_up ? kIONetworkLinkActive : 0) | kIONetworkLinkValid);
 }
 
-bool eu_philjordan_virtio_net::beginHandlingInterrupts()
+bool PJVirtioNet::beginHandlingInterrupts()
 {
 	PJLogVerbose("virtio-net beginHandlingInterrupts()\n");
 	if (!pci_dev)
@@ -1018,7 +1003,7 @@ bool eu_philjordan_virtio_net::beginHandlingInterrupts()
 	return true;
 }
 
-void eu_philjordan_virtio_net::endHandlingInterrupts()
+void PJVirtioNet::endHandlingInterrupts()
 {
 	if (!intr_event_source)
 	{
@@ -1033,7 +1018,7 @@ void eu_philjordan_virtio_net::endHandlingInterrupts()
 
 
 
-bool eu_philjordan_virtio_net::configureInterface(IONetworkInterface *netif)
+bool PJVirtioNet::configureInterface(IONetworkInterface *netif)
 {
 	PJLogVerbose("virtio-net configureInterface([%s] @ %p)\n", netif ? netif->getMetaClass()->getClassName() : "null", netif);
 	if (!super::configureInterface(netif))
@@ -1044,7 +1029,7 @@ bool eu_philjordan_virtio_net::configureInterface(IONetworkInterface *netif)
 	return true;
 }
 
-IOReturn eu_philjordan_virtio_net::getPacketFilters(const OSSymbol *group, UInt32 *filters) const
+IOReturn PJVirtioNet::getPacketFilters(const OSSymbol *group, UInt32 *filters) const
 {
 	PJLogVerbose("virtio-net getPacketFilters()\n");
 	return super::getPacketFilters(group, filters);
@@ -1052,13 +1037,13 @@ IOReturn eu_philjordan_virtio_net::getPacketFilters(const OSSymbol *group, UInt3
 
 
 
-int32_t eu_philjordan_virtio_net::readStatus()
+int32_t PJVirtioNet::readStatus()
 {
 	if (!status_field_offset) return -1;
 	return virtioHeaderRead16(status_field_offset);
 }
 
-bool eu_philjordan_virtio_net::setupVirtqueue(
+bool PJVirtioNet::setupVirtqueue(
 	uint16_t queue_id, virtio_net_virtqueue& queue)
 {
 	/* virtqueues must be aligned to 4096 bytes (last 12 bits 0) and the shifted
@@ -1133,7 +1118,7 @@ void virtqueue_free(virtio_net_virtqueue& queue)
 }
 
 
-IOOutputQueue* eu_philjordan_virtio_net::createOutputQueue()
+IOOutputQueue* PJVirtioNet::createOutputQueue()
 {
 	/* For now, go with a gated output queue, as this is the simplest option. Later
 	 * on, we can provide more granular access to the virtqueue mechanism. */
@@ -1142,12 +1127,12 @@ IOOutputQueue* eu_philjordan_virtio_net::createOutputQueue()
 	return queue;
 }
 
-IOReturn eu_philjordan_virtio_net::enable(IOKernelDebugger *debugger)
+IOReturn PJVirtioNet::enable(IOKernelDebugger *debugger)
 {
-	return runInCommandGate<IOKernelDebugger, &eu_philjordan_virtio_net::gatedEnableDebugger>(debugger);
+	return runInCommandGate<IOKernelDebugger, &PJVirtioNet::gatedEnableDebugger>(debugger);
 }
 
-IOReturn eu_philjordan_virtio_net::gatedEnableDebugger(IOKernelDebugger* debugger)
+IOReturn PJVirtioNet::gatedEnableDebugger(IOKernelDebugger* debugger)
 {
 	if (!this->debugger || !this->debugger_transmit_packet)
 		return kIOReturnError;
@@ -1179,7 +1164,7 @@ IOReturn eu_philjordan_virtio_net::gatedEnableDebugger(IOKernelDebugger* debugge
 	return ok ? kIOReturnSuccess : kIOReturnError;
 }
 
-bool eu_philjordan_virtio_net::enablePartial()
+bool PJVirtioNet::enablePartial()
 {
 	if (!pci_dev->open(this))
 	{
@@ -1236,12 +1221,12 @@ bool eu_philjordan_virtio_net::enablePartial()
 	return true;
 }
 
-IOReturn eu_philjordan_virtio_net::enable(IONetworkInterface* interface)
+IOReturn PJVirtioNet::enable(IONetworkInterface* interface)
 {
-	return runInCommandGate<IONetworkInterface, &eu_philjordan_virtio_net::gatedEnableInterface>(interface);
+	return runInCommandGate<IONetworkInterface, &PJVirtioNet::gatedEnableInterface>(interface);
 }
 
-IOReturn eu_philjordan_virtio_net::selectMedium(const IONetworkMedium* medium)
+IOReturn PJVirtioNet::selectMedium(const IONetworkMedium* medium)
 {
 	setSelectedMedium(medium);
 	return kIOReturnSuccess;
@@ -1257,7 +1242,7 @@ static bool virtio_net_add_medium(OSDictionary* medium_dict, IOMediumType type, 
 	return ok;
 }
 
-bool eu_philjordan_virtio_net::createMediumTable()
+bool PJVirtioNet::createMediumTable()
 {
 	OSDictionary* dict = OSDictionary::withCapacity(2);
 	if (!dict)
@@ -1295,7 +1280,7 @@ bool eu_philjordan_virtio_net::createMediumTable()
 }
 
 
-IOReturn eu_philjordan_virtio_net::gatedEnableInterface(IONetworkInterface* interface)
+IOReturn PJVirtioNet::gatedEnableInterface(IONetworkInterface* interface)
 {
 	PJLogVerbose("virtio-net enable()\n");
 	if (driver_state == kDriverStateEnabledBoth || driver_state == kDriverStateEnabled)
@@ -1353,7 +1338,7 @@ IOReturn eu_philjordan_virtio_net::gatedEnableInterface(IONetworkInterface* inte
 	return kIOReturnSuccess;
 }
 
-void eu_philjordan_virtio_net::clearVirtqueuePackets(virtio_net_virtqueue& queue)
+void PJVirtioNet::clearVirtqueuePackets(virtio_net_virtqueue& queue)
 {
 	if (!queue.packets_for_descs)
 		return;
@@ -1363,6 +1348,11 @@ void eu_philjordan_virtio_net::clearVirtqueuePackets(virtio_net_virtqueue& queue
 		if (!packet || packet == debugger_transmit_packet)
 			continue;
 
+		if (packet->dma_cmd)
+			packet->dma_cmd->clearMemoryDescriptor();
+		OSSafeReleaseNULL(packet->dma_cmd);
+		OSSafeReleaseNULL(packet->dma_md);
+		OSSafeReleaseNULL(packet->mbuf_md);
 		if (packet->mbuf)
 		{
 			freePacket(packet->mbuf);
@@ -1370,6 +1360,7 @@ void eu_philjordan_virtio_net::clearVirtqueuePackets(virtio_net_virtqueue& queue
 		}
 		PJLogVerbose("clearVirtqueuePackets (queue %p): Freeing packet buffer %p (%llu bytes) - descriptor %p\n", &queue, packet, packet->mem ? packet->mem->getLength() : 0, packet->mem);
 		IOBufferMemoryDescriptor* md = packet->mem;
+		
 		memset(packet, 0, sizeof(*packet));
 		if (md)
 			md->release();
@@ -1378,7 +1369,7 @@ void eu_philjordan_virtio_net::clearVirtqueuePackets(virtio_net_virtqueue& queue
 	}
 }
 
-IOReturn eu_philjordan_virtio_net::disable(IOKernelDebugger *debugger)
+IOReturn PJVirtioNet::disable(IOKernelDebugger *debugger)
 {
 	PJLogVerbose("virtio-net disable(): Disabling debugger.\n");
 	if (driver_state != kDriverStateEnabledDebugging && driver_state != kDriverStateEnabledBoth)
@@ -1401,7 +1392,7 @@ IOReturn eu_philjordan_virtio_net::disable(IOKernelDebugger *debugger)
 	return kIOReturnSuccess;
 }
 
-IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
+IOReturn PJVirtioNet::disable(IONetworkInterface* interface)
 {
 	PJLogVerbose("virtio-net disable()\n");
 	if (driver_state != kDriverStateEnabled && driver_state != kDriverStateEnabledBoth)
@@ -1441,7 +1432,7 @@ IOReturn eu_philjordan_virtio_net::disable(IONetworkInterface* interface)
 	return kIOReturnSuccess;
 }
 
-void eu_philjordan_virtio_net::disablePartial()
+void PJVirtioNet::disablePartial()
 {
 	PJLogVerbose("virtio-net disablePartial()\n");
 	handleReceivedPackets();
@@ -1459,7 +1450,7 @@ void eu_philjordan_virtio_net::disablePartial()
 	pci_dev->close(this);
 	
 	// Free any pooled packet headers
-	packet_bufdesc_pool->flushCollection();
+	flushPacketPool();
 
 	// Deallocate virtqueue resources and reset descriptors
 	virtqueue_free(rx_queue);
@@ -1470,10 +1461,10 @@ void eu_philjordan_virtio_net::disablePartial()
 }
 
 
-UInt32 eu_philjordan_virtio_net::outputPacket(mbuf_t buffer, void *param)
+UInt32 PJVirtioNet::outputPacket(mbuf_t buffer, void *param)
 {
 	// try to clear any completed packets from the queue
-	runInCommandGate<bool, &eu_philjordan_virtio_net::releaseSentPackets>(false);
+	runInCommandGate<bool, &PJVirtioNet::releaseSentPackets>(false);
 
 	if (tx_queue.num_free_desc < 3)
 	{
@@ -1510,7 +1501,7 @@ UInt32 eu_philjordan_virtio_net::outputPacket(mbuf_t buffer, void *param)
 	return kIOReturnOutputSuccess;
 }
 	
-void eu_philjordan_virtio_net::receivePacket(void *pkt, UInt32 *pktSize, UInt32 timeout)
+void PJVirtioNet::receivePacket(void *pkt, UInt32 *pktSize, UInt32 timeout)
 {
 	// note: timeout seems to be 3ms in OSX 10.6.8
 	uint64_t timeout_us = timeout * 1000ull;
@@ -1566,7 +1557,7 @@ void eu_philjordan_virtio_net::receivePacket(void *pkt, UInt32 *pktSize, UInt32 
 static void vring_push_free_desc(virtio_net_virtqueue& queue, uint16_t free_idx);
 static int32_t vring_pop_free_desc(virtio_net_virtqueue& queue);
 
-IOReturn eu_philjordan_virtio_net::getChecksumSupport(UInt32 *checksumMask, UInt32 checksumFamily, bool isOutput)
+IOReturn PJVirtioNet::getChecksumSupport(UInt32 *checksumMask, UInt32 checksumFamily, bool isOutput)
 {
 	*checksumMask = 0;
 	if (checksumFamily != kChecksumFamilyTCPIP)
@@ -1576,7 +1567,7 @@ IOReturn eu_philjordan_virtio_net::getChecksumSupport(UInt32 *checksumMask, UInt
 	return kIOReturnSuccess;
 }
 
-void eu_philjordan_virtio_net::sendPacket(void *pkt, UInt32 pktSize)
+void PJVirtioNet::sendPacket(void *pkt, UInt32 pktSize)
 {
 	//kprintf("virtio-net sendPacket(): %lu bytes\n", pktSize);
 	if (pktSize > kIOEthernetMaxPacketSize)
@@ -1675,7 +1666,7 @@ static void vring_push_free_desc(virtio_net_virtqueue& queue, uint16_t free_idx)
 	++queue.num_free_desc;
 }
 
-bool eu_philjordan_virtio_net::notifyQueueAvailIdx(virtio_net_virtqueue& queue, uint16_t new_avail_idx)
+bool PJVirtioNet::notifyQueueAvailIdx(virtio_net_virtqueue& queue, uint16_t new_avail_idx)
 {
 	OSSynchronizeIO();
 	queue.avail->idx = new_avail_idx;
@@ -1691,7 +1682,7 @@ bool eu_philjordan_virtio_net::notifyQueueAvailIdx(virtio_net_virtqueue& queue, 
 /// Structure for tracking the progress of turning a packet into virtqueue buffers across outputPacketSegment() calls
 struct virtio_net_cursor_segment_context
 {
-	eu_philjordan_virtio_net* me;
+	PJVirtioNet* me;
 	
 	virtio_net_virtqueue& queue;
 	/// Array of descriptor indices in the chain
@@ -1712,20 +1703,20 @@ struct virtio_net_cursor_segment_context
 	
 	unsigned descs_allocd;
 };
-void eu_philjordan_virtio_net::outputPacketSegment(IOMemoryCursor::PhysicalSegment segment, void* segment_context, UInt32 segmentIndex)
+bool PJVirtioNet::outputPacketSegment(IODMACommand* target, IODMACommand::Segment64 segment, void* segment_context, UInt32 segmentIndex)
 {
 	//IOLog("virtio-net outputPacketSegment(): segment %lu at 0x%08lX, length %lu.\n", segmentIndex, segment.location, segment.length);
 	virtio_net_cursor_segment_context* ctx = static_cast<virtio_net_cursor_segment_context*>(segment_context);
 	if (ctx->error)
-		return;
+		return false;
 	
 	if (segmentIndex >= ctx->max_num_descs)
 	{
 		ctx->error = true;
-		return;
+		return false;
 	}
 	
-	if (segment.length < 1)
+	if (segment.fLength < 1)
 		VIOLog("virtio-net outputPacketSegment(): Zero length segment!\n");
 	
 	int32_t desc = ctx->descs[segmentIndex];
@@ -1747,36 +1738,65 @@ void eu_philjordan_virtio_net::outputPacketSegment(IOMemoryCursor::PhysicalSegme
 		--ctx->descs_allocd;
 		VIOLog("virtio-net outputPacketSegment(): failed to allocate descriptor.\n");
 		ctx->error = ctx->out_of_descriptors = true;
-		return;
+		return false;
 	}
 
 	ctx->descs[segmentIndex] = desc;
 	vring_desc& buf = ctx->queue.desc[desc];
-	buf.addr = segment.location;
-	buf.len = static_cast<uint32_t>(segment.length);
+	buf.addr = segment.fIOVMAddr;
+	buf.len = static_cast<uint32_t>(segment.fLength);
 	ctx->total_len += buf.len;
 	buf.flags = ctx->buffer_direction_flag;
 	buf.next = UINT16_MAX;
 	if ((int32_t)segmentIndex > ctx->max_segment_created)
 		ctx->max_segment_created = segmentIndex;
 	//IOLog("virtio-net outputPacketSegment(): Added segment as buffer in descriptor %u, total packet length so far: %u.\n", desc, ctx->total_length);
+	return true;
 }
 
-IOBufferMemoryDescriptor* eu_philjordan_virtio_net::allocPacketHeaderBuffer()
+virtio_net_packet* PJVirtioNet::allocPacket()
 {
 	IOBufferMemoryDescriptor* packet_mem = OSDynamicCast(IOBufferMemoryDescriptor, packet_bufdesc_pool->getAnyObject());
 	if (packet_mem)
 	{
 		packet_mem->retain();
 		packet_bufdesc_pool->removeObject(packet_mem);
+		return static_cast<virtio_net_packet*>(packet_mem->getBytesNoCopy());
 	}
 	else
 	{
 		packet_mem = IOBufferMemoryDescriptor::inTaskWithOptions(
 			kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut | kIOInhibitCache, sizeof(virtio_net_packet),
 			sizeof(void*) /* align to pointer */);
+		if (!packet_mem)
+			return NULL;
+		virtio_net_packet* packet = static_cast<virtio_net_packet*>(packet_mem->getBytesNoCopy());
+		packet->mem = packet_mem;
+		packet->dma_cmd = IODMACommand::withSpecification(outputPacketSegment, 64, 0);
+		if (!packet->dma_cmd)
+		{
+			packet_mem->release();
+			return NULL;
+		}
+		packet->dma_md = SSDCMultiSubrangeMemoryDescriptor::withDescriptorRanges(NULL, 0, kIODirectionNone, false);
+		if (!packet->dma_md)
+		{
+			packet->dma_cmd->release();
+			packet_mem->release();
+			return NULL;
+		}
+		
+		packet->mbuf_md = PJMbufMemoryDescriptor::withMbuf(NULL, kIODirectionNone);
+		if (!packet->mbuf_md)
+		{
+			packet->dma_md->release();
+			packet->dma_cmd->release();
+			packet_mem->release();
+			return NULL;
+		}
+		packet->mbuf = NULL;
+		return packet;
 	}
-	return packet_mem;
 }
 
 static void virtio_net_enable_tcp_csum(virtio_net_packet* packet, bool need_partial, mbuf_t packet_mbuf, uint16_t ip_hdr_len, struct ip* ip_hdr)
@@ -1836,7 +1856,7 @@ static void virtio_net_enable_tcp_csum(virtio_net_packet* packet, bool need_part
  * kIOReturnSuccess if everything went well, kIOReturnNoMemory if alloc failed,
  * and kIOReturnError if something else went wrong.
  */
-IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx)
+IOReturn PJVirtioNet::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx)
 {
 	// check if there are going to be enough descriptors around
 	if (queue.num_free_desc < 2)
@@ -1905,45 +1925,46 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 	}
 
 	// compact small packets more if descriptors are getting scarce
-	uint32_t max_segs = min(pref_max_tx_data_segs, queue.num_free_desc - 1); // subtracted 1 off for the virtio net header
-	// We shouldn't limit large (TSO) packets too much as they'll cross page boundaries, though
-	if (requested_tsov4)
-	{
-		size_t packet_len = 0;
-		uint32_t num_segments = 0;
-		mbuf_t mb = packet_mbuf;
-		while (mb)
-		{
-			size_t len = mbuf_len(mb);
-			if (len > 0)
-				++num_segments;
-			packet_len += len;
-			mb = mbuf_next(mb);
-		}
-		if (packet_len > 65550)
-		{
-			kprintf("virtio-net addPacketToQueue(): packet with length %lu encountered, this is probably too big.\n", packet_len);
-			return kIOReturnError;
-		}
-		if (num_segments > max_segs) // it usually will be...
-		{
-			if (num_segments >= queue.num_free_desc) // >= not > because we need a buffer for the virtio header
-			{
-				return kIOReturnOutputStall;
-			}
-			max_segs = num_segments;
-		}
-	}
+	uint32_t max_segs = queue.num_free_desc; // add 1 for the virtio net header
+	
+	if (max_segs < 2)
+		return kIOReturnOutputStall;
 
 	// recycle or allocate memory for the packet virtio header buffer
-	IOBufferMemoryDescriptor* packet_mem = allocPacketHeaderBuffer();
-	if (!packet_mem)
-		return kIOReturnNoMemory;
-	virtio_net_packet* packet = static_cast<virtio_net_packet*>(packet_mem->getBytesNoCopy());
+	virtio_net_packet* packet = allocPacket();
+	if (!packet)
+	{
+		VIOLog("virtio-net addPacketToQueue(): Failed to alloc packet\n");
+		return kIOReturnOutputDropped;
+	}
 
 	packet->mbuf = packet_mbuf;
-	packet->mem = packet_mem;
+	IODirection buf_direction = for_writing ? kIODirectionOut : kIODirectionOut;
+	if (!packet->mbuf_md->initWithMbuf(packet_mbuf, buf_direction))
+	{
+		VIOLog("virtio-net addPacketToQueue(): Failed to init mbuf memory descriptor\n");
+		packet_bufdesc_pool->setObject(packet->mem);
+		packet->mem->release();
+		return kIOReturnOutputDropped;
+	}
 	
+	packet->mem->setDirection(buf_direction);
+	
+	packet->dma_md_subranges[0].length = sizeof(packet->header);
+	packet->dma_md_subranges[0].md = packet->mem;
+	packet->dma_md_subranges[0].offset = offsetof(virtio_net_packet, header);
+	packet->dma_md_subranges[1].length = packet->mbuf_md->getLength();
+	packet->dma_md_subranges[1].md = packet->mbuf_md;
+	packet->dma_md_subranges[1].offset = 0;
+	if (!packet->dma_md->initWithDescriptorRanges(packet->dma_md_subranges, 2, buf_direction, false))
+	{
+		VIOLog("virtio-net addPacketToQueue(): Failed to init virtqueue multi memory descriptor\n");
+		packet->mbuf_md->initWithMbuf(NULL, kIODirectionNone);
+		packet_bufdesc_pool->setObject(packet->mem);
+		packet->mem->release();
+		return kIOReturnOutputDropped;
+	}
+
 	size_t head_len = mbuf_len(packet_mbuf);
 
 	// initialise the packet buffer header
@@ -1979,25 +2000,19 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 			packet_mbuf, ip_hdr_len, ip_hdr);
 	}
 	
-
-
-	// get the necessary descriptor for the head
-	const int32_t head_desc = vring_pop_free_desc(queue);
-	if (head_desc < 0)
+	IOReturn ret = packet->dma_cmd->setMemoryDescriptor(packet->dma_md, true /* prepare */);
+	if (ret != kIOReturnSuccess)
 	{
-		OSSafeReleaseNULL(packet_mem);
-		return kIOReturnOutputStall;
+		VIOLog("virtio-net addPacketToQueue(): Failed to set memory descriptor for DMA command: %x\n", ret);
+		packet->dma_md->initWithDescriptorRanges(NULL, 0, kIODirectionNone, false);
+		packet->mbuf_md->initWithMbuf(NULL, kIODirectionNone);
+		packet_bufdesc_pool->setObject(packet->mem);
+		packet->mem->release();
+		return kIOReturnOutputDropped;
 	}
-
-	// set up the header buffer descriptor
+	
 	const uint16_t direction_flag = for_writing ? VRING_DESC_F_WRITE : 0;
-	
-	vring_desc& head_buf = queue.desc[head_desc];
-	head_buf.addr = packet_mem->getPhysicalSegment(0, NULL, 0) + offsetof(virtio_net_packet, header);
-	head_buf.len = sizeof(virtio_net_hdr);
-	head_buf.flags = direction_flag;
-	head_buf.next = 0;
-	
+
 	// array for the allocated descriptors, -1 = not yet allocated
 	int32_t descs[max_segs];
 	for (unsigned i = 0; i < max_segs; ++i)
@@ -2007,13 +2022,15 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 		this, queue, descs, max_segs, -1, direction_flag, 0, false, false, 0
 	};
 	
-	uint32_t segments = packet_memory_cursor->genPhysicalSegments(
-		packet_mbuf, &segment_context, max_segs, !requested_tsov4 /* coalesce short packets */);
-	if (segments == 0 || segment_context.error)
+	UInt64 offset = 0;
+	UInt32 segments = max_segs;
+	ret = packet->dma_cmd->genIOVMSegments(&offset, &segment_context, &segments);
+	if (ret != kIOReturnSuccess || offset < packet->dma_md->getLength())
 	{
-		kprintf("virtio-net addPacketToQueue(): an error occurred. %u segments produced, "
+	
+		kprintf("virtio-net addPacketToQueue(): an error %x occurred. %u segments produced, offset reached %llu (of %llu) "
 			"max index: %d, error: %s, out of descriptors: %s, total length so far %u, descriptors allocated: %u, max segments: %u, free descriptors: %u.\n",
-			segments, segment_context.max_segment_created,
+			ret, (uint32_t)segments, offset, (uint64_t)packet->dma_md->getLength(), segment_context.max_segment_created,
 			segment_context.error ? "yes" : "no", segment_context.out_of_descriptors ? "yes" : "no", segment_context.total_len,
 			segment_context.descs_allocd, max_segs, queue.num_free_desc);
 		for (unsigned i = 0; i < max_segs; ++i)
@@ -2023,24 +2040,29 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
 				vring_push_free_desc(queue, descs[i]);
 			}
 		}
-		
-		vring_push_free_desc(queue, head_desc);
-		
-		OSSafeReleaseNULL(packet_mem);
-		return segment_context.out_of_descriptors ? kIOReturnOutputStall : kIOReturnError;
+		packet->dma_md->initWithDescriptorRanges(NULL, 0, kIODirectionNone, false);
+		packet->mbuf_md->initWithMbuf(NULL, kIODirectionNone);
+		packet_bufdesc_pool->setObject(packet->mem);
+		packet->mem->release();
+		return kIOReturnOutputStall;
 	}
 	
+	if (offset != packet->dma_md->getLength())
+	{
+		VIOLog("virtio-net addPacketToQueue(): genIOVMSegments moved offset to %llu (expected %llu). %u segments created (max %u)\n", offset, (uint64_t)packet->dma_md->getLength(), (uint32_t)segments, max_segs);
+	}
 	if (segments != segment_context.max_segment_created + 1)
 	{
-		VIOLog("virtio-net addPacketToQueue(): genPhysicalSegments reports %u, max index is %d!\n", segments, segment_context.max_segment_created);
+		VIOLog("virtio-net addPacketToQueue(): genPhysicalSegments reports %lu, max index is %d!\n", (unsigned long)segments, segment_context.max_segment_created);
 	}
 
+	uint16_t head_desc = descs[0];
 	uint16_t prev = head_desc;
-	for (unsigned i = 0; i < segments; ++i)
+	for (unsigned i = 1; i < segments; ++i)
 	{
 		if (descs[i] < 0)
 		{
-			VIOLog("virtio-net addPacketToQueue(): no descriptor for index %u (%u total), max seg %d\n", i, segments, segment_context.max_segment_created);
+			VIOLog("virtio-net addPacketToQueue(): no descriptor for index %u (%u total), max seg %d\n", i, (uint32_t)segments, segment_context.max_segment_created);
 			continue;
 		}
 		queue.desc[prev].next = descs[i];
@@ -2113,7 +2135,7 @@ IOReturn eu_philjordan_virtio_net::addPacketToQueue(mbuf_t packet_mbuf, virtio_n
  * The packet may be split over multiple buffers (max 2 for now in practice) as
  * we need physical addresses.
  */
-bool eu_philjordan_virtio_net::populateReceiveBuffers()
+bool PJVirtioNet::populateReceiveBuffers()
 {
 	uint16_t avail_idx = rx_queue.avail->idx;
 	bool added = false;
@@ -2159,7 +2181,7 @@ bool eu_philjordan_virtio_net::populateReceiveBuffers()
 	return true;
 }
 
-void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
+void PJVirtioNet::releaseSentPackets(bool from_debugger)
 {
 	if (!from_debugger && (!work_loop || !work_loop->inGate()))
 	{
@@ -2207,6 +2229,10 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 
 		if (packet)
 		{
+			packet->dma_cmd->clearMemoryDescriptor();
+			packet->dma_md->initWithDescriptorRanges(NULL, 0, kIODirectionNone, false);
+			packet->mbuf_md->initWithMbuf(NULL, kIODirectionNone);
+			
 			if (packet == debugger_transmit_packet)
 			{
 				// this packet was queued with the debugging API - this is weird
@@ -2289,7 +2315,7 @@ void eu_philjordan_virtio_net::releaseSentPackets(bool from_debugger)
 	}
 }
 
-void eu_philjordan_virtio_net::handleReceivedPackets()
+void PJVirtioNet::handleReceivedPackets()
 {
 	if (!work_loop || !work_loop->inGate())
 	{
@@ -2329,6 +2355,10 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 		if (packet)
 		{
 			rx_queue.packets_for_descs[used_desc] = NULL;
+
+			packet->dma_cmd->clearMemoryDescriptor();
+			packet->dma_md->initWithDescriptorRanges(NULL, 0, kIODirectionNone, false);
+			packet->mbuf_md->initWithMbuf(NULL, kIODirectionNone);
 
 			if (interface && len <= kIOEthernetMaxPacketSize && packet->mbuf)
 			{
@@ -2383,7 +2413,7 @@ void eu_philjordan_virtio_net::handleReceivedPackets()
 	}
 }
 
-void eu_philjordan_virtio_net::freeDescriptorChain(virtio_net_virtqueue& queue, uint16_t desc_chain_head)
+void PJVirtioNet::freeDescriptorChain(virtio_net_virtqueue& queue, uint16_t desc_chain_head)
 {
 	uint16_t desc = desc_chain_head; 
 	while (true)
@@ -2406,20 +2436,36 @@ void eu_philjordan_virtio_net::freeDescriptorChain(virtio_net_virtqueue& queue, 
 }
 
 
-const OSString* eu_philjordan_virtio_net::newVendorString() const
+const OSString* PJVirtioNet::newVendorString() const
 {
 	return OSString::withCStringNoCopy("Virtio");
 }
 
 
-const OSString* eu_philjordan_virtio_net::newModelString() const
+const OSString* PJVirtioNet::newModelString() const
 {
 	return OSString::withCStringNoCopy("Paravirtual Ethernet Adapter");
 }
 
+void PJVirtioNet::flushPacketPool()
+{
+	if (packet_bufdesc_pool)
+	{
+		while (OSObject* obj = packet_bufdesc_pool->getAnyObject())
+		{
+			if (IOBufferMemoryDescriptor* buf = OSDynamicCast(IOBufferMemoryDescriptor, obj))
+			{
+				virtio_net_packet* packet = static_cast<virtio_net_packet*>(buf->getBytesNoCopy());
+				OSSafeReleaseNULL(packet->dma_cmd);
+				OSSafeReleaseNULL(packet->dma_md);
+				OSSafeReleaseNULL(packet->mbuf_md);
+			}
+			packet_bufdesc_pool->removeObject(obj);
+		}
+	}
+}
 
-
-void eu_philjordan_virtio_net::stop(IOService* provider)
+void PJVirtioNet::stop(IOService* provider)
 {
 	PJLogVerbose("virtio-net stop()\n");
 	if (provider != this->pci_dev)
@@ -2453,6 +2499,9 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 		if (debugger_transmit_packet->mbuf)
 			freePacket(debugger_transmit_packet->mbuf);
 		debugger_transmit_packet->mbuf = NULL;
+		OSSafeReleaseNULL(debugger_transmit_packet->dma_cmd);
+		OSSafeReleaseNULL(debugger_transmit_packet->dma_md);
+		OSSafeReleaseNULL(debugger_transmit_packet->mbuf_md);
 		if (debugger_transmit_packet->mem)
 			debugger_transmit_packet->mem->release();
 		debugger_transmit_packet = NULL;
@@ -2462,9 +2511,9 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 	{
 		disablePartial();
 	}
-		
-	if (packet_bufdesc_pool)
-		packet_bufdesc_pool->flushCollection();
+	
+	flushPacketPool();
+	
 	OSSafeReleaseNULL(interface);
 	clearVirtqueuePackets(rx_queue);
 	clearVirtqueuePackets(tx_queue);
@@ -2487,7 +2536,7 @@ void eu_philjordan_virtio_net::stop(IOService* provider)
 	PJLogVerbose("virtio-net end super::stop()\n");
 }
 
-void eu_philjordan_virtio_net::free()
+void PJVirtioNet::free()
 {
 	PJLogVerbose("virtio-net free()\n");
 	
@@ -2501,7 +2550,6 @@ void eu_philjordan_virtio_net::free()
 		endHandlingInterrupts();
 	}
 	OSSafeReleaseNULL(work_loop);
-	OSSafeReleaseNULL(packet_memory_cursor);
 	if (this->pci_dev && this->pci_dev->isOpen(this))
 		this->pci_dev->close(this);
 	this->pci_dev = NULL;
@@ -2514,7 +2562,7 @@ void eu_philjordan_virtio_net::free()
 }
 
 
-IOReturn eu_philjordan_virtio_net::getHardwareAddress(IOEthernetAddress* addrP)
+IOReturn PJVirtioNet::getHardwareAddress(IOEthernetAddress* addrP)
 {
 	if (!mac_address_is_valid)
 	{

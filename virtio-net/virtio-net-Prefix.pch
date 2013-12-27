@@ -2,3 +2,4 @@
 // Prefix header for all source files of the 'virtio-net' target in the 'virtio-net' project
 //
 
+#include "virtio_net_classes.h"

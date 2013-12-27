@@ -9,7 +9,7 @@
 	<key>CFBundleIconFile</key>
 	<string></string>
 	<key>CFBundleIdentifier</key>
-	<string>eu.philjordan.${PRODUCT_NAME:rfc1034identifier}</string>
+	<string>eu.philjordan.driver.VirtioNet</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -17,27 +17,27 @@
 	<key>CFBundlePackageType</key>
 	<string>KEXT</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.9.4b3</string>
+	<string>0.9.5b4</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleVersion</key>
-	<string>0.9.4b3</string>
+	<string>0.9.5b4</string>
 	<key>IOKitPersonalities</key>
 	<dict>
 		<key>VirtioNet</key>
 		<dict>
 			<key>CFBundleIdentifier</key>
-			<string>eu.philjordan.virtio-net</string>
+			<string>eu.philjordan.driver.VirtioNet</string>
 			<key>IOClass</key>
-			<string>eu_philjordan_virtio_net</string>
+			<string>eu_philjordan_driver_virtio_net_VirtioEthernetController</string>
 			<key>IOPCIClassMatch</key>
 			<string>0x02000000&amp;0xffff0000</string>
 			<key>IOPCIPrimaryMatch</key>
 			<string>0x10001AF4&amp;0xffc0ffff</string>
 			<key>IOProviderClass</key>
 			<string>IOPCIDevice</string>
-			<key>PJVirtioMaxTransmitDataSegments</key>
-			<integer>1</integer>
+			<key>IOProbeScore</key>
+			<integer>100</integer>
 			<key>PJVirtioNetAllowOffloading</key>
 			<true/>
 		</dict>

@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		294EC538186CCC1D0079686B /* PJMbufMemoryDescriptor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 294EC536186CCC1D0079686B /* PJMbufMemoryDescriptor.cpp */; };
+		294EC539186CCC1D0079686B /* PJMbufMemoryDescriptor.h in Headers */ = {isa = PBXBuildFile; fileRef = 294EC537186CCC1D0079686B /* PJMbufMemoryDescriptor.h */; };
+		294EC53C186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 294EC53A186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.cpp */; };
+		294EC53D186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.h in Headers */ = {isa = PBXBuildFile; fileRef = 294EC53B186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.h */; };
 		298A5AC413F2BDEE00348079 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 298A5AC313F2BDED00348079 /* LICENSE */; };
 		299F18F313DC183D000200A5 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 299F18F113DC183D000200A5 /* InfoPlist.strings */; };
 		299F18F613DC183D000200A5 /* virtio_net.h in Headers */ = {isa = PBXBuildFile; fileRef = 299F18F513DC183D000200A5 /* virtio_net.h */; };
@@ -16,6 +20,12 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		294EC536186CCC1D0079686B /* PJMbufMemoryDescriptor.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = PJMbufMemoryDescriptor.cpp; sourceTree = "<group>"; };
+		294EC537186CCC1D0079686B /* PJMbufMemoryDescriptor.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PJMbufMemoryDescriptor.h; sourceTree = "<group>"; };
+		294EC53A186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = SSDCMultiSubrangeMemoryDescriptor.cpp; sourceTree = "<group>"; };
+		294EC53B186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SSDCMultiSubrangeMemoryDescriptor.h; sourceTree = "<group>"; };
+		294EC53F186D0EC20079686B /* virtio_net_classes.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = virtio_net_classes.h; sourceTree = "<group>"; };
+		294EC540186D114D0079686B /* pj_name_prefix.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = pj_name_prefix.h; sourceTree = "<group>"; };
 		298A5AC313F2BDED00348079 /* LICENSE */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
 		299F18E913DC183D000200A5 /* virtio-net.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "virtio-net.kext"; sourceTree = BUILT_PRODUCTS_DIR; };
 		299F18ED13DC183D000200A5 /* Kernel.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Kernel.framework; path = System/Library/Frameworks/Kernel.framework; sourceTree = SDKROOT; };
@@ -75,9 +85,15 @@
 		299F18EE13DC183D000200A5 /* virtio-net */ = {
 			isa = PBXGroup;
 			children = (
+				294EC53F186D0EC20079686B /* virtio_net_classes.h */,
 				29A7E26113E2DC0B00E33939 /* virtio_ring.h */,
 				299F18F513DC183D000200A5 /* virtio_net.h */,
 				299F18F713DC183D000200A5 /* virtio_net.cpp */,
+				294EC540186D114D0079686B /* pj_name_prefix.h */,
+				294EC537186CCC1D0079686B /* PJMbufMemoryDescriptor.h */,
+				294EC536186CCC1D0079686B /* PJMbufMemoryDescriptor.cpp */,
+				294EC53B186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.h */,
+				294EC53A186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.cpp */,
 				299F18EF13DC183D000200A5 /* Supporting Files */,
 				29CD526D13DD86D40062DAA6 /* readme.md */,
 			);
@@ -104,6 +120,8 @@
 			files = (
 				299F18F613DC183D000200A5 /* virtio_net.h in Headers */,
 				29A7E26213E2DC0B00E33939 /* virtio_ring.h in Headers */,
+				294EC539186CCC1D0079686B /* PJMbufMemoryDescriptor.h in Headers */,
+				294EC53D186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -183,6 +201,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				299F18F813DC183D000200A5 /* virtio_net.cpp in Sources */,
+				294EC538186CCC1D0079686B /* PJMbufMemoryDescriptor.cpp in Sources */,
+				294EC53C186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -241,8 +261,8 @@
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "virtio-net/virtio-net-Prefix.pch";
 				INFOPLIST_FILE = "virtio-net/virtio-net-Info.plist";
-				MODULE_NAME = eu.philjordan.virtio_net;
-				MODULE_VERSION = 0.9.4b3;
+				MODULE_NAME = eu.philjordan.driver.VirtioNet;
+				MODULE_VERSION = 0.9.5b4;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				WRAPPER_EXTENSION = kext;
 			};
@@ -259,8 +279,8 @@
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "virtio-net/virtio-net-Prefix.pch";
 				INFOPLIST_FILE = "virtio-net/virtio-net-Info.plist";
-				MODULE_NAME = eu.philjordan.virtio_net;
-				MODULE_VERSION = 0.9.4b3;
+				MODULE_NAME = eu.philjordan.driver.VirtioNet;
+				MODULE_VERSION = 0.9.5b4;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				WRAPPER_EXTENSION = kext;
 			};

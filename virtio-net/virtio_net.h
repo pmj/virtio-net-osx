@@ -22,14 +22,13 @@
 #define VIRTIO_NET_H
 
 #include <IOKit/network/IOEthernetController.h>
-#include <IOKit/IOMemoryCursor.h>
 #include <IOKit/IOCommandGate.h>
+#include <IOKit/IODMACommand.h>
 #include "virtio_ring.h"
 
 class IOBufferMemoryDescriptor;
 class IOPCIDevice;
 class IOEthernetInterface;
-class IOMbufMemoryCursor;
 class IOFilterInterruptEventSource;
 class IOInterruptEventSource;
 
@@ -59,9 +58,11 @@ void virtqueue_init(virtio_net_virtqueue& queue, IOBufferMemoryDescriptor* buf, 
 /// Releases the buffer, frees the packets_for_descs array and clears fields.
 void virtqueue_free(virtio_net_virtqueue& queue);
 
-class eu_philjordan_virtio_net : public IOEthernetController
+struct virtio_net_packet;
+
+class PJVirtioNet : public IOEthernetController
 {
-	OSDeclareDefaultStructors(eu_philjordan_virtio_net);
+	OSDeclareDefaultStructors(PJVirtioNet);
 
 public:
 	/// Constructor. Will eventually initialise various internal state.
@@ -116,24 +117,24 @@ protected:
 	/// Creates and publishes the table of possible media
 	bool createMediumTable();
 
-	template <typename P, IOReturn(eu_philjordan_virtio_net::*fn)(P* p)> static IOReturn runMemberInCommandGateAction(OSObject* owner, void* param, void*, void*, void*)
+	template <typename P, IOReturn(PJVirtioNet::*fn)(P* p)> static IOReturn runMemberInCommandGateAction(OSObject* owner, void* param, void*, void*, void*)
 	{
-		eu_philjordan_virtio_net* array = OSDynamicCast(eu_philjordan_virtio_net, owner);
+		PJVirtioNet* array = OSDynamicCast(PJVirtioNet, owner);
 		assert(array);
 		return (array->*fn)(static_cast<P*>(param));
 	}
-	template <typename P, IOReturn(eu_philjordan_virtio_net::*fn)(P* p)> IOReturn runInCommandGate(P* p)
+	template <typename P, IOReturn(PJVirtioNet::*fn)(P* p)> IOReturn runInCommandGate(P* p)
 	{
 		return getCommandGate()->runAction(runMemberInCommandGateAction<P, fn>, static_cast<void*>(p));
 	}
-	template <typename P, void(eu_philjordan_virtio_net::*fn)(P p)> static IOReturn runMemberInCommandGateAction(OSObject* owner, void* param, void*, void*, void*)
+	template <typename P, void(PJVirtioNet::*fn)(P p)> static IOReturn runMemberInCommandGateAction(OSObject* owner, void* param, void*, void*, void*)
 	{
-		eu_philjordan_virtio_net* array = OSDynamicCast(eu_philjordan_virtio_net, owner);
+		PJVirtioNet* array = OSDynamicCast(PJVirtioNet, owner);
 		assert(array);
 		(array->*fn)(*static_cast<P*>(param));
 		return kIOReturnSuccess;
 	}
-	template <typename P, void(eu_philjordan_virtio_net::*fn)(P p)> IOReturn runInCommandGate(P p)
+	template <typename P, void(PJVirtioNet::*fn)(P p)> IOReturn runInCommandGate(P p)
 	{
 		return getCommandGate()->runAction(runMemberInCommandGateAction<P, fn>, static_cast<void*>(&p));
 	}
@@ -214,9 +215,9 @@ protected:
 	 * freed in either case (but referenced as a buffer in case of success).
 	 */
 	IOReturn addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx);
-	IOBufferMemoryDescriptor* allocPacketHeaderBuffer();
-	/// Segment output function for the memory cursor, adds a physical memory segment to the buffer descriptor chain
-	static void outputPacketSegment(IOMemoryCursor::PhysicalSegment segment, void* segments, UInt32 segmentIndex);
+	virtio_net_packet* allocPacket();
+	/// Segment output function for the DMA command, adds a physical memory segment to the buffer descriptor chain
+	static bool outputPacketSegment(IODMACommand* target, IODMACommand::Segment64 segment, void* segments, UInt32 segmentIndex);
 
 	void freeDescriptorChain(virtio_net_virtqueue& queue, uint16_t desc_chain_head);
 	bool populateReceiveBuffers();
@@ -256,12 +257,9 @@ protected:
 	/// Frees any packets marked as "used" in the transmit queue and frees their descriptors
 	void releaseSentPackets(bool from_debugger = false);
 	
+	void flushPacketPool();
+
 	DriverState driver_state;
-	
-	// Settings from the info.plist personality section (set in init())
-	/// Maximum number of physical data sections in a transmit packet
-	uint16_t pref_max_tx_data_segs;
-	static const uint16_t pref_max_tx_data_segs_default = 1;
 	
 	/// Whether or not the driver is permitted to negotiate any checksumming or offloading features
 	bool pref_allow_offloading;
@@ -305,7 +303,7 @@ protected:
 	IOWorkLoop* work_loop;
 	IOFilterInterruptEventSource* intr_event_source;
 	
-	IOMbufMemoryCursor* packet_memory_cursor;
+	//IOMbufMemoryCursor* packet_memory_cursor;
 	
 	/// Set of IOBufferMemoryDescriptor objects to be used as network packet header buffers
 	OSSet* packet_bufdesc_pool;
