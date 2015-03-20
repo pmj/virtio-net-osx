@@ -271,7 +271,7 @@ IOService* PJVirtioNet::probe(IOService* provider, SInt32* score)
 	}
 
 	// check the BAR0 range is in the I/O space and has the right minimum length
-	if (0 == (1u & pci_dev->configRead32(kIOPCIConfigBaseAddress0))) // is there a higher-level way of doing this?
+	if (0 == (kIOPCIIOSpace & pci_dev->configRead32(kIOPCIConfigBaseAddress0))) // is there a higher-level way of doing this?
 	{
 		VIOLog("virtio-net probe(): BAR0 indicates the first device range is in the memory address space, this driver expects an I/O range.\n");
 		return NULL;
