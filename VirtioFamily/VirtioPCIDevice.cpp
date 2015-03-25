@@ -26,6 +26,19 @@ namespace VirtioCapOffset
 	};
 }
 
+struct VirtioModernPCIVirtqueue
+{
+	IOBufferMemoryDescriptor* descriptor_table_mem;
+	IODMACommand* descriptor_table_mem_dma;
+	IOBufferMemoryDescriptor* available_ring_mem;
+	IODMACommand* available_ring_mem_dma;
+	IOBufferMemoryDescriptor* used_ring_mem;
+	IODMACommand* used_ring_mem_dma;
+
+	struct VirtioVirtqueue queue;
+};
+
+
 IOService* VirtioPCIDevice::probe(IOService* provider, SInt32* score)
 {
 	IOLog("VirtioPCIDevice::probe()\n");

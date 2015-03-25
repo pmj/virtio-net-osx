@@ -81,6 +81,8 @@
 		<string>10.0</string>
 		<key>com.apple.iokit.IOPCIFamily</key>
 		<string>2.0</string>
+		<key>com.apple.kpi.mach</key>
+		<string>10.0</string>
 	</dict>
 </dict>
 </plist>

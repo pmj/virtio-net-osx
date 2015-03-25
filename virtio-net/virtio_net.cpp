@@ -1070,7 +1070,7 @@ bool PJVirtioNet::setupVirtqueue(
 	// allocate an appropriately sized DMA buffer. As per the spec, this must be physically contiguous.
 	size_t queue_size_bytes = vring_size(queue_size);
 	IOBufferMemoryDescriptor* queue_buffer = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-		kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut | kIOInhibitCache, queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
+		kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
 	if (!queue_buffer)
 	{
 		VIOLog("virtio-net setupVirtqueue(): Failed to allocate queue buffer with %" PRIuPTR " contiguous bytes and mask %" PRIX64 ".\n",
