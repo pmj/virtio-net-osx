@@ -274,6 +274,7 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, 
 		IOLog("VirtioLegacyPCIDevice::setupVirtqueue(): Queue size for queue %u is %u, which is not a power of 2. Aborting.\n", queue_id, num_queue_entries);
 		return kIOReturnDeviceError;
 	}
+	IOLog("VirtioLegacyPCIDevice::setupVirtqueue(): Queue size for queue %u is %u.\n", queue_id, num_queue_entries);
 
 	// calculate queue memory size
 	const size_t queue_mem_size = vring_mem_size(num_queue_entries);
@@ -369,6 +370,8 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, 
 		queue->queue.used_ring_interrupt_index = (uint16_t*)(queue_mem_bytes + spaceUsed);
 		spaceUsed += sizeof(*queue->queue.used_ring_interrupt_index);
 	}
+	
+	queue->queue.used_ring_last_head_index = queue->queue.used_ring->head_index;
 	
 	// initialise list of unused descriptors:
 	queue->queue.first_unused_descriptor_index = 0;
@@ -543,29 +546,56 @@ IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueue(unsigned queue_index, I
 	uint16_t first_descriptor_index = UINT16_MAX;
 	virtio_legacy_pci_vring_desc_chain chain = { queue, UINT16_MAX, UINT16_MAX, false };
 	
-	if (device_readable_buf != nullptr && device_readable_buf->getLength() != 0)
+	const bool device_readable_descs = (device_readable_buf != nullptr && device_readable_buf->getLength() != 0);
+	const bool device_writable_descs = (device_writable_buf != nullptr && device_writable_buf->getLength() != 0);
+	unsigned min_descs_required = (device_readable_descs ? 1 : 0) + (device_writable_descs ? 1 : 0);
+	if (min_descs_required > queue->num_entries)
 	{
-		UInt32 max_segments = queue->num_unused_descriptors;
-		if (device_writable_buf != nullptr)
-			--max_segments;
+		return kIOReturnUnsupported;
+	}
+	if (min_descs_required == 0)
+	{
+		return kIOReturnBadArgument;
+	}
+	if (min_descs_required > queue->num_unused_descriptors)
+	{
+		return kIOReturnBusy;
+	}
+	
+	if (device_readable_descs)
+	{
+		min_descs_required--;
+		UInt32 max_segments = queue->num_unused_descriptors - min_descs_required;
 		
 		// 1. reserve a descriptor
 		int16_t descriptorIndex = reserveNewDescriptor(queue);
+		IOLog("VirtioLegacyPCIDevice::submitBuffersToVirtqueue(): reserved descriptor %d as first device_readable\n", descriptorIndex);
 		// 2. save it as first_descriptor_index
 		first_descriptor_index = descriptorIndex;
 		// 3. save it as chain.reserved_descriptor_index
 		VirtioBuffer* desc_buffer = &queue->descriptor_buffers[descriptorIndex];
 		chain.reserved_descriptor_index = descriptorIndex;
+		desc_buffer->completion = completion;
 		// 4. get its DMA command:
 		IODMACommand* device_readable_dma = desc_buffer->dma_cmd;
 		desc_buffer->dma_cmd_used = true;
-		// 5.
-		device_readable_dma->setMemoryDescriptor(device_writable_buf, true /* prepare DMA */);
+		// 5. prepare DMA command
+		IOReturn result = device_readable_dma->setMemoryDescriptor(device_readable_buf, true /* prepare DMA */);
+		if (result != kIOReturnSuccess)
+		{
+			returnUnusedDescriptor(queue, descriptorIndex);
+			return result;
+		}
 		// 6.
 		UInt64 offset = 0;
-		IOReturn result = device_readable_dma->genIOVMSegments(&offset, &chain, &max_segments);
-		if (result != kIOReturnSuccess || max_segments < 1)
+		result = device_readable_dma->genIOVMSegments(&offset, &chain, &max_segments);
+		if (result != kIOReturnSuccess || max_segments < 1 || offset != device_readable_buf->getLength())
 		{
+			if (result == kIOReturnSuccess)
+			{
+				IOLog("VirtioLegacyPCIDevice::submitBuffersToVirtqueue(): emitted %u segments up to offset %llu for device-readable buffer with %llu bytes\n", max_segments, offset, device_readable_buf->getLength());
+				result = kIOReturnInternalError;
+			}
 			device_readable_dma->clearMemoryDescriptor(true /* complete dma */);
 			// clean up, return descriptors to unused list
 			desc_buffer->dma_cmd_used = false;
@@ -579,18 +609,90 @@ IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueue(unsigned queue_index, I
 			return result;
 		}
 	}
-	if (device_writable_buf != nullptr)
+	if (device_writable_descs)
 	{
 		chain.device_writable = true;
 		// otherwise, same as above..
+		UInt32 max_segments = queue->num_unused_descriptors;
 		
+		// 1. reserve a descriptor
+		int16_t descriptorIndex = reserveNewDescriptor(queue);
+		IOLog("VirtioLegacyPCIDevice::submitBuffersToVirtqueue(): reserved descriptor %d as first device writable\n", descriptorIndex);
+		// 2. save it as first_descriptor_index
+		VirtioBuffer* desc_buffer = &queue->descriptor_buffers[descriptorIndex];
+		if(first_descriptor_index == UINT16_MAX)
+		{
+			//no reads have been made so the first descriptor needs to be set
+			first_descriptor_index = descriptorIndex;
+			desc_buffer->completion = completion;
+		}
+		// 3. save it as chain.reserved_descriptor_index
+		chain.reserved_descriptor_index = descriptorIndex;
+		// 4. get its DMA command:
+		IODMACommand* dma = desc_buffer->dma_cmd;
+		desc_buffer->dma_cmd_used = true;
+		// 5.
+		IOReturn result = dma->setMemoryDescriptor(device_writable_buf, true /* prepare DMA */);
+		if (result != kIOReturnSuccess)
+		{
+			descriptorIndex = first_descriptor_index;
+			while(descriptorIndex >= 0)
+			{
+				int16_t next = queue->descriptor_buffers[descriptorIndex].next_desc;
+				if (queue->descriptor_buffers[descriptorIndex].dma_cmd_used)
+				{
+					queue->descriptor_buffers[descriptorIndex].dma_cmd->clearMemoryDescriptor(true);
+					queue->descriptor_buffers[descriptorIndex].dma_cmd_used = false;
+				}
+				returnUnusedDescriptor(queue, descriptorIndex);
+				descriptorIndex = next;
+			}
+			return result;
+		}
+		// 6.
+		UInt64 offset = 0;
+		result = dma->genIOVMSegments(&offset, &chain, &max_segments);
+		if (result != kIOReturnSuccess || max_segments < 1 || offset != device_writable_buf->getLength())
+		{
+			if (result == kIOReturnSuccess)
+			{
+				IOLog("VirtioLegacyPCIDevice::submitBuffersToVirtqueue(): emitted %u segments up to offset %llu for device-writable buffer with %llu bytes\n", max_segments, offset, device_writable_buf->getLength());
+				result = kIOReturnInternalError;
+			}
+			dma->clearMemoryDescriptor(true /* complete dma */);
+			// clean up, return descriptors to unused list
+			desc_buffer->dma_cmd_used = false;
+			descriptorIndex = first_descriptor_index;
+			while(descriptorIndex >= 0)
+			{
+				int16_t next = queue->descriptor_buffers[descriptorIndex].next_desc;
+				if (queue->descriptor_buffers[descriptorIndex].dma_cmd_used)
+				{
+					queue->descriptor_buffers[descriptorIndex].dma_cmd->clearMemoryDescriptor(true);
+					queue->descriptor_buffers[descriptorIndex].dma_cmd_used = false;
+				}
+				returnUnusedDescriptor(queue, descriptorIndex);
+				descriptorIndex = next;
+			}
+			return result;
+		}
+
 		
 	}
 	
 	// add index of first descriptor in chain to 'available' ring
 	
-	
-	return kIOReturnUnsupported;
+	uint16_t avail_pos = queue->available_ring->head_index;
+	queue->available_ring->ring[avail_pos % queue->num_entries] = first_descriptor_index;
+	avail_pos++;
+	OSSynchronizeIO();
+	queue->available_ring->head_index = avail_pos;
+	OSSynchronizeIO();
+	if((queue->used_ring->flags & VirtioVringUsedFlag::NO_NOTIFY)==0)
+	{
+		this->pci_device->ioWrite16(VirtioLegacyHeaderOffset::QUEUE_NOTIFY, queue_index, this->pci_virtio_header_iomap);
+	}
+	return kIOReturnSuccess;
 }
 
 bool VirtioLegacyPCIDevice::outputVringDescSegment(
@@ -609,13 +711,14 @@ bool VirtioLegacyPCIDevice::outputVringDescSegment(
 	else
 	{
 		descriptorIndex = reserveNewDescriptor(queue);
+		IOLog("VirtioLegacyPCIDevice::outputVringDescSegment(): reserved descriptor %d for segment %u\n", descriptorIndex,segmentIndex);
 	}
 	
 	VirtioVringDesc* descriptor = &queue->descriptor_table[descriptorIndex];
 	
 	// 2. fill physical address & length fields in descriptor with values from segment argument
 	descriptor->phys_address = segment.fIOVMAddr;
-	descriptor->length_bytes = segment.fLength;
+	descriptor->length_bytes = static_cast<uint32_t>(segment.fLength);
 	
 	// set flags to 0 or WRITE depending on chain->device_writable
 	if(chain->device_writable)
@@ -640,9 +743,48 @@ bool VirtioLegacyPCIDevice::outputVringDescSegment(
 
 	// 5. Save index of current descriptor as last descriptor
 	descriptor->next = 0xffff;
+	queue->descriptor_buffers[descriptorIndex].next_desc = -1;
 	chain->current_last_descriptor_index = descriptorIndex;
 
-	return false;
+	return true;
+}
+
+void VirtioLegacyPCIDevice::processCompletedRequestsInVirtqueue(VirtioVirtqueue* virtqueue)
+{
+	const unsigned queue_len = virtqueue->num_entries;
+	while (true)
+	{
+		uint16_t currentUsedRingHeadIndex = virtqueue->used_ring->head_index;
+		uint16_t nextUsedRingIndex = virtqueue->used_ring_last_head_index;
+		uint16_t numAdded = currentUsedRingHeadIndex - virtqueue->used_ring_last_head_index;
+		if(numAdded == 0)
+		{
+			return;
+		}
+		for( ; nextUsedRingIndex != currentUsedRingHeadIndex; nextUsedRingIndex++)
+		{
+			unsigned item = nextUsedRingIndex % queue_len;
+			uint32_t writtenBytes = virtqueue->used_ring->ring[item].written_bytes;
+			uint32_t dequeuedDescriptor = virtqueue->used_ring->ring[item].descriptor_id;
+
+			VirtioCompletion completion = virtqueue->descriptor_buffers[dequeuedDescriptor].completion;
+			int16_t descriptorIndex = dequeuedDescriptor;
+			while (descriptorIndex >= 0)
+			{
+				int16_t next = virtqueue->descriptor_buffers[descriptorIndex].next_desc;
+				if (virtqueue->descriptor_buffers[descriptorIndex].dma_cmd_used)
+				{
+					virtqueue->descriptor_buffers[descriptorIndex].dma_cmd->clearMemoryDescriptor(true);
+					virtqueue->descriptor_buffers[descriptorIndex].dma_cmd_used = false;
+				}
+				IOLog("VirtioLegacyPCIDevice::processCompletedRequestsInVirtqueue(): returning descriptor %d to unused list\n", descriptorIndex);
+				returnUnusedDescriptor(virtqueue, descriptorIndex);
+				descriptorIndex = next;
+			}
+			completion.action(completion.target, completion.ref, false, writtenBytes);
+		}
+		virtqueue->used_ring_last_head_index = currentUsedRingHeadIndex;
+	}
 }
 
 void VirtioLegacyPCIDevice::closePCIDevice()
@@ -784,6 +926,11 @@ void VirtioLegacyPCIDevice::interruptAction(IOInterruptEventSource* source, int 
 		{
 			this->configChangeAction(this->configChangeTarget, this);
 		}
+	}
+	
+	for(unsigned i = 0; i < this->num_virtqueues; i++)
+	{
+		this->processCompletedRequestsInVirtqueue(&this->virtqueues[i].queue);
 	}
 }
 

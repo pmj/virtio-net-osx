@@ -51,7 +51,7 @@ public:
 
 class IODMACommand;
 
-typedef void(*VirtioCompletionAction)(OSObject* target, void* ref, bool device_reset);
+typedef void(*VirtioCompletionAction)(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written);
 struct VirtioCompletion
 {
 	VirtioCompletionAction action;
@@ -88,6 +88,9 @@ struct VirtioVirtqueue
 	 * a notification) */
 	uint16_t* avail_ring_notify_index;
 	
+	/// Value of used_ring->head_index last time the used ring was checked for activity.
+	uint16_t used_ring_last_head_index;
+	
 	VirtioBuffer* descriptor_buffers;
 	/// If >= 0, an unused descriptor table entry, with all others chained along next_desc
 	int16_t first_unused_descriptor_index;
@@ -122,6 +125,14 @@ struct VirtioVringUsedElement
 	uint32_t descriptor_id;
 	uint32_t written_bytes;
 };
+
+namespace VirtioVringUsedFlag
+{
+	enum VirtioVringUsedFlags
+	{
+		NO_NOTIFY = 1
+	};
+}
 struct VirtioVringUsed
 {
 	uint16_t flags;

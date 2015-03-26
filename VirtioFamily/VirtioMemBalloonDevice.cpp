@@ -171,6 +171,7 @@ void VirtioMemBalloonDevice::inflateMemBalloon(uint32_t num_pages_to_inflate_by)
 	// decide whether to alloc 1 big chunk or many pages
 	if (num_pages_to_inflate_by >= BIG_CHUNK_PAGES)
 	{
+		IOLog("VirtioMemBalloonDevice::inflateMemBalloon(): inflating by big chunk\n");
 		// big chunk
 		IOBufferMemoryDescriptor* chunk = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
 			kernel_task,
@@ -224,6 +225,7 @@ void VirtioMemBalloonDevice::inflateMemBalloon(uint32_t num_pages_to_inflate_by)
 	}
 	else
 	{
+		IOLog("VirtioMemBalloonDevice::inflateMemBalloon(): inflating by %u pages\n", num_pages_to_inflate_by);
 		this->page_address_array->setLength(sizeof(uint32_t) * num_pages_to_inflate_by);
 		uint32_t* page_addresses = static_cast<uint32_t*>(this->page_address_array->getBytesNoCopy());
 		IOReturn result = kIOReturnSuccess;
@@ -283,7 +285,7 @@ void VirtioMemBalloonDevice::inflateMemBalloon(uint32_t num_pages_to_inflate_by)
 	}
 }
 
-void VirtioMemBalloonDevice::inflateRequestCompleted(OSObject* target, void* ref, bool device_reset)
+void VirtioMemBalloonDevice::inflateRequestCompleted(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written)
 {
 	VirtioMemBalloonDevice* me = static_cast<VirtioMemBalloonDevice*>(target);
 	me->inflateRequestCompleted(device_reset);
@@ -303,7 +305,7 @@ void VirtioMemBalloonDevice::inflateRequestCompleted(bool device_reset)
 	
 	uint32_t num_pages = this->virtio_device->readDeviceSpecificConfig32LE(CONFIG_NUM_REQUESTED_PAGES_OFFSET);
 	uint32_t actual = this->virtio_device->readDeviceSpecificConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET);
-	IOLog("VirtioMemBalloonDevice::deviceConfigChangeAction(): num_pages = %u, actual = %u\n", num_pages, actual);
+	IOLog("VirtioMemBalloonDevice::inflateRequestCompleted(): num_pages = %u, actual = %u\n", num_pages, actual);
 	this->inflateDeflateIfNecessary(num_pages);
 }
 

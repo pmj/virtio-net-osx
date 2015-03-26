@@ -48,7 +48,7 @@ public:
 	virtual void inflateMemBalloon(uint32_t num_pages_to_inflate_by);
 	virtual void deflateMemBalloon(uint32_t num_pages_to_deflate_by);
 	
-	static void inflateRequestCompleted(OSObject* target, void* ref, bool device_reset);
+	static void inflateRequestCompleted(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written);
 	virtual void inflateRequestCompleted(bool device_reset);
 	
 #ifdef VIRTIO_LOG_TERMINATION
