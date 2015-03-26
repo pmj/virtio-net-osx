@@ -64,6 +64,8 @@ bool VirtioMemBalloonDevice::start(IOService* provider)
 	
 	this->pageBuffers = OSArray::withCapacity(0);
 	this->bigChunkBuffers = OSArray::withCapacity(0);
+	this->deflatingBuffers = OSArray::withCapacity(BIG_CHUNK_PAGES);
+
 	this->inflateDeflateInProgress = false;
 	this->command_gate->runAction(
 		[](OSObject* mem_balloon, void* arg0, void* arg1, void* arg2, void* arg3)
@@ -132,6 +134,8 @@ uint32_t VirtioMemBalloonDevice::totalPagesAllocated()
 	uint32_t total_pages_allocated = num_big_chunks_allocated * BIG_CHUNK_PAGES + num_pages_allocated;
 	return total_pages_allocated;
 }
+
+
 void VirtioMemBalloonDevice::inflateDeflateIfNecessary(uint32_t num_pages_requested)
 {
 	// check if an inflate/deflate request is in progress, and if so, return immediately
@@ -162,30 +166,42 @@ void VirtioMemBalloonDevice::inflateDeflateIfNecessary(uint32_t num_pages_reques
 	}
 
 }
+
+static IOBufferMemoryDescriptor* virtio_mem_balloon_create_reserved_buffer(size_t num_bytes, OSArray* buffer_array)
+{
+	static const mach_vm_address_t MEM_BALLOON_PHYS_ALLOC_MASK = 0xffffffffull << 12u;
+	
+	IOBufferMemoryDescriptor* buffer = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+		kernel_task,
+		kIODirectionInOut | kIOMemoryMapperNone /* we want CPU-physical addresses, not mapped for DMA */,
+		num_bytes, MEM_BALLOON_PHYS_ALLOC_MASK);
+	buffer->prepare(kIODirectionInOut);
+	buffer_array->setObject(buffer);
+	return buffer;
+}
+
 void VirtioMemBalloonDevice::inflateMemBalloon(uint32_t num_pages_to_inflate_by)
 {
 	// set the flag indicating that an inflation/deflation is in progress
 	this->inflateDeflateInProgress = true;
-
-	const mach_vm_address_t MEM_BALLOON_PHYS_ALLOC_MASK = 0xffffffffull << 12u;
+	
+	OSArray* buffer_array;
+	unsigned buffers_created = 0;
+	IOReturn result = kIOReturnSuccess;
+	uint32_t* page_addresses;
+	
 	// decide whether to alloc 1 big chunk or many pages
 	if (num_pages_to_inflate_by >= BIG_CHUNK_PAGES)
 	{
 		IOLog("VirtioMemBalloonDevice::inflateMemBalloon(): inflating by big chunk\n");
 		// big chunk
-		IOBufferMemoryDescriptor* chunk = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-			kernel_task,
-			kIODirectionInOut | kIOMemoryMapperNone /* we want CPU-physical addresses, not mapped for DMA */,
-			BIG_CHUNK_BYTES, MEM_BALLOON_PHYS_ALLOC_MASK);
-		chunk->prepare(kIODirectionInOut);
-		
-		this->bigChunkBuffers->setObject(chunk);
-		
-		IOReturn result = kIOReturnSuccess;
+		buffer_array = this->bigChunkBuffers;
+		buffers_created = 1;
+		IOBufferMemoryDescriptor* chunk = virtio_mem_balloon_create_reserved_buffer(BIG_CHUNK_BYTES, buffer_array);
 		
 		// tell the memory balloon the physical addresses of all pages in the chunk
 		this->page_address_array->setLength(sizeof(uint32_t) * BIG_CHUNK_PAGES);
-		uint32_t* page_addresses = static_cast<uint32_t*>(this->page_address_array->getBytesNoCopy());
+		page_addresses = static_cast<uint32_t*>(this->page_address_array->getBytesNoCopy());
 		//for (each page in chunk)
 		for (unsigned page = 0; page < BIG_CHUNK_PAGES; page++)
 		{
@@ -202,44 +218,20 @@ void VirtioMemBalloonDevice::inflateMemBalloon(uint32_t num_pages_to_inflate_by)
 			page_addresses[page] = static_cast<uint32_t>(phys_addr / 4096);
 		}
 		
-		if (result == kIOReturnSuccess)
-		{
-			VirtioCompletion completion = { &inflateRequestCompleted, this };
-			result = this->virtio_device->submitBuffersToVirtqueue(INFLATE_QUEUE_INDEX, this->page_address_array, nullptr, completion);
-			if (result != kIOReturnSuccess)
-			{
-				IOLog("VirtioMemBalloonDevice::inflateMemBalloon(): submitBuffersToVirtqueue failed for big chunk page addresses - %x\n", result);
-			}
-		}
-		
-		if (result != kIOReturnSuccess)
-		{
-			// error occurred
-			memset(page_addresses, 0, sizeof(page_addresses[0]) * BIG_CHUNK_PAGES);
-			chunk->complete(kIODirectionInOut);
-			this->bigChunkBuffers->removeObject(this->bigChunkBuffers->getCount() - 1);
-			this->inflateDeflateInProgress = false;
-			
-		}
-		OSSafeReleaseNULL(chunk);
 	}
 	else
 	{
 		IOLog("VirtioMemBalloonDevice::inflateMemBalloon(): inflating by %u pages\n", num_pages_to_inflate_by);
 		this->page_address_array->setLength(sizeof(uint32_t) * num_pages_to_inflate_by);
-		uint32_t* page_addresses = static_cast<uint32_t*>(this->page_address_array->getBytesNoCopy());
-		IOReturn result = kIOReturnSuccess;
+		page_addresses = static_cast<uint32_t*>(this->page_address_array->getBytesNoCopy());
+		
 		// allocate lots of PAGE_SIZE buffers in a loop
+		buffer_array = this->pageBuffers;
 		unsigned i;
 		for(i = 0; i < num_pages_to_inflate_by; i++)
 		{
-			IOBufferMemoryDescriptor* page_buf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-				kernel_task,
-				kIODirectionInOut | kIOMemoryMapperNone /* we want CPU-physical addresses, not mapped for DMA */,
-				PAGE_SIZE, MEM_BALLOON_PHYS_ALLOC_MASK);
-			
-			page_buf->prepare(kIODirectionInOut);
-			this->pageBuffers->setObject(page_buf);
+			IOBufferMemoryDescriptor* page_buf = virtio_mem_balloon_create_reserved_buffer(PAGE_SIZE, buffer_array);
+			++buffers_created;
 		
 			// tell the memory balloon the physical addresses of the pages
 			
@@ -254,34 +246,30 @@ void VirtioMemBalloonDevice::inflateMemBalloon(uint32_t num_pages_to_inflate_by)
 			page_addresses[i] = static_cast<uint32_t>(phys_addr / 4096);
 			OSSafeReleaseNULL(page_buf);
 		}
+	}
 		
-		if (result == kIOReturnSuccess)
-		{
-			VirtioCompletion completion = { &inflateRequestCompleted, this };
-			result = this->virtio_device->submitBuffersToVirtqueue(INFLATE_QUEUE_INDEX, this->page_address_array, nullptr, completion);
-			if (result != kIOReturnSuccess)
-			{
-				IOLog("VirtioMemBalloonDevice::inflateMemBalloon(): submitBuffersToVirtqueue failed for individual page addresses - %x\n", result);
-			}
-		}
-		
+	if (result == kIOReturnSuccess)
+	{
+		VirtioCompletion completion = { &inflateRequestCompleted, this };
+		result = this->virtio_device->submitBuffersToVirtqueue(INFLATE_QUEUE_INDEX, this->page_address_array, nullptr, completion);
 		if (result != kIOReturnSuccess)
 		{
-			// error occurred
-			memset(page_addresses, 0, sizeof(page_addresses[0]) * PAGE_SIZE);
-			for(unsigned j = 0; j < i; j++)
-			{
-				IOBufferMemoryDescriptor* page_buf = static_cast<IOBufferMemoryDescriptor*>(
-					this->pageBuffers->getLastObject());
-				page_buf->complete(kIODirectionInOut);
-				this->pageBuffers->removeObject(this->pageBuffers->getCount() - 1);
-			}
-			this->inflateDeflateInProgress = false;
-			
+			IOLog("VirtioMemBalloonDevice::inflateMemBalloon(): submitBuffersToVirtqueue failed for %u page addresses - %x\n", buffers_created, result);
 		}
-		
-
-		
+	}
+	
+	if (result != kIOReturnSuccess)
+	{
+		// error occurred
+		memset(page_addresses, 0, sizeof(page_addresses[0]) * buffers_created);
+		for(unsigned j = 0; j < buffers_created; j++)
+		{
+			IOBufferMemoryDescriptor* buf = static_cast<IOBufferMemoryDescriptor*>(
+				buffer_array->getLastObject());
+			buf->complete(kIODirectionInOut);
+			buffer_array->removeObject(buffer_array->getCount() - 1);
+		}
+		this->inflateDeflateInProgress = false;
 	}
 }
 
@@ -312,8 +300,124 @@ void VirtioMemBalloonDevice::inflateRequestCompleted(bool device_reset)
 
 void VirtioMemBalloonDevice::deflateMemBalloon(uint32_t num_pages_to_deflate_by)
 {
+	// set the flag indicating that an inflation/deflation is in progress
+	this->inflateDeflateInProgress = true;
+	
+	OSArray* buffer_array;
+	unsigned buffers_destroyed = 0;
+	IOReturn result = kIOReturnSuccess;
+	uint32_t* page_addresses;
+	
+	// decide whether to dealloc 1 big chunk or many pages
+	unsigned numBigChunks = this->bigChunkBuffers->getCount();
+	if (num_pages_to_deflate_by >= BIG_CHUNK_PAGES && numBigChunks > 0)
+	{
+		IOLog("VirtioMemBalloonDevice::deflateMemBalloon(): deflating by big chunk\n");
+		// big chunk
+		
+		buffer_array = this->bigChunkBuffers;
+		buffers_destroyed = 1;
+		IOBufferMemoryDescriptor* chunk = static_cast<IOBufferMemoryDescriptor*>(buffer_array->getLastObject());
+		this->deflatingBuffers->setObject(chunk);
+		buffer_array->removeObject(numBigChunks - 1);
+		
+		// tell the memory balloon the physical addresses of all pages in the chunk
+		this->page_address_array->setLength(sizeof(uint32_t) * BIG_CHUNK_PAGES);
+		page_addresses = static_cast<uint32_t*>(this->page_address_array->getBytesNoCopy());
+		//for (each page in chunk)
+		for (unsigned page = 0; page < BIG_CHUNK_PAGES; page++)
+		{
+			IOByteCount page_offset = page * PAGE_SIZE;
+			
+			IOByteCount len = 0;
+			addr64_t phys_addr = chunk->getPhysicalSegment(page_offset, &len, kIOMemoryMapperNone);
+			if (phys_addr == 0 || len < PAGE_SIZE)
+			{
+				// error
+				result = kIOReturnInternalError;
+				break;
+			}
+			page_addresses[page] = static_cast<uint32_t>(phys_addr / 4096);
+		}
+	}
+	else
+	{
+		IOLog("VirtioMemBalloonDevice::deflateMemBalloon(): deflating by %u pages\n", num_pages_to_deflate_by);
+		unsigned num_pages = this->pageBuffers->getCount();
+		if(num_pages_to_deflate_by > num_pages )
+		{
+			//convert 1 big chunk into 512 pages
+			unsigned new_num_pages = BIG_CHUNK_PAGES - num_pages_to_deflate_by;
+			this->inflateMemBalloon(new_num_pages);
+			return;
+		}
+		if(num_pages_to_deflate_by > BIG_CHUNK_PAGES)
+		{
+			num_pages_to_deflate_by = BIG_CHUNK_PAGES;
+		}
+		this->page_address_array->setLength(sizeof(uint32_t) * num_pages_to_deflate_by);
+		page_addresses = static_cast<uint32_t*>(this->page_address_array->getBytesNoCopy());
+		
+		buffer_array = this->pageBuffers;
+		//buffers_destroyed = num_pages;
+		unsigned i;
+		for(i = 0; i < num_pages_to_deflate_by; i++)
+		{
+			IOBufferMemoryDescriptor* page_buf = static_cast<IOBufferMemoryDescriptor*>(buffer_array->getLastObject());
+			this->deflatingBuffers->setObject(page_buf);
+			buffer_array->removeObject(num_pages - 1 - i);
+			//++buffers_created;
+		
+			// tell the memory balloon the physical addresses of the pages
+			
+			IOByteCount len = 0;
+			addr64_t phys_addr = page_buf->getPhysicalSegment(0, &len, kIOMemoryMapperNone);
+			if (phys_addr == 0 || len < PAGE_SIZE)
+			{
+				// error
+				result = kIOReturnInternalError;
+				break;
+			}
+			page_addresses[i] = static_cast<uint32_t>(phys_addr / 4096);
+		}
+	}
+	
+	if (result == kIOReturnSuccess)
+	{
+		VirtioCompletion completion = { &deflateRequestCompleted, this };
+		result = this->virtio_device->submitBuffersToVirtqueue(DEFLATE_QUEUE_INDEX, this->page_address_array, nullptr, completion);
+		if (result != kIOReturnSuccess)
+		{
+			IOLog("VirtioMemBalloonDevice::deflateMemBalloon(): submitBuffersToVirtqueue failed for %u page addresses - %x\n", buffers_destroyed, result);
+		}
+	}
 }
 
+
+void VirtioMemBalloonDevice::deflateRequestCompleted(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written)
+{
+	VirtioMemBalloonDevice* me = static_cast<VirtioMemBalloonDevice*>(target);
+	me->deflateRequestCompleted(device_reset);
+}
+
+void VirtioMemBalloonDevice::deflateRequestCompleted(bool device_reset)
+{
+	this->inflateDeflateInProgress = false;
+	if(device_reset)
+	{
+		//device shutdown
+		return;
+	}
+	this->deflatingBuffers->flushCollection();
+	
+	uint32_t total_pages_allocated = this->totalPagesAllocated();
+	this->virtio_device->writeDeviceSpecificConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET, total_pages_allocated);
+	
+	uint32_t num_pages = this->virtio_device->readDeviceSpecificConfig32LE(CONFIG_NUM_REQUESTED_PAGES_OFFSET);
+	uint32_t actual = this->virtio_device->readDeviceSpecificConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET);
+	IOLog("VirtioMemBalloonDevice::deflateRequestCompleted(): num_pages = %u, actual = %u\n", num_pages, actual);
+	this->inflateDeflateIfNecessary(num_pages);
+}
 
 // DON'T ADD ANYTHING BELOW THIS
 
