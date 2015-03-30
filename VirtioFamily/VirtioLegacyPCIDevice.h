@@ -52,7 +52,10 @@ public:
 
 	virtual IOReturn submitBuffersToVirtqueue(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion) override;
 	virtual void processCompletedRequestsInVirtqueue(VirtioVirtqueue* virtqueue);
+
+	virtual uint8_t readDeviceSpecificConfig8(unsigned device_specific_offset) override;
 	virtual uint32_t readDeviceSpecificConfig32LE(unsigned device_specific_offset) override;
+	virtual uint16_t readDeviceSpecificConfig16Native(unsigned device_specific_offset) override;
 	virtual void writeDeviceSpecificConfig32LE(unsigned device_specific_offset, uint32_t value_to_write) override;
 
 	virtual void stop(IOService* provider) override;

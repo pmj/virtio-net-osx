@@ -24,6 +24,7 @@
 #include <IOKit/network/IOEthernetController.h>
 #include <IOKit/IOCommandGate.h>
 #include <IOKit/IODMACommand.h>
+#include "../VirtioFamily/VirtioDevice.h"
 #include "virtio_ring.h"
 
 class IOBufferMemoryDescriptor;
@@ -167,43 +168,18 @@ protected:
 		kDriverStateStopped
 		
 	};
-	bool setupVirtqueue(uint16_t queue_id, virtio_net_virtqueue& queue);
-	/// Sets the "failed" bit in the device's status register
-	void failDevice();
-	void virtioHeaderWrite8(uint16_t offset, uint8_t val);
-	void virtioHeaderWrite16(uint16_t offset, uint16_t val);
-	void virtioHeaderWrite32(uint16_t offset, uint32_t val);
-	uint8_t virtioHeaderRead8(uint16_t offset);
-	uint16_t virtioHeaderRead16(uint16_t offset);
-	uint32_t virtioHeaderRead32(uint16_t offset);
-	void virtioHeaderWriteLE32(uint16_t offset, uint32_t val);
-	uint32_t virtioHeaderReadLE32(uint16_t offset);
-	void virtioHeaderWriteLE16(uint16_t offset, uint16_t val);
-	uint16_t virtioHeaderReadLE16(uint16_t offset);
 	
-	// Universal virtio configuration space/status functions:
 	
-	/// Writes the 'reset' value to the device state register, thus re-inititalising it.
-	void virtioResetDevice();
-	/// Overwrite the device/driver status register with the given value
-	void setVirtioDeviceStatus(uint8_t status);
-	/// Bitwise-or the device/driver status register with the given value
-	void updateVirtioDeviceStatus(uint8_t status);
-	/// Resets the device, then initialise it far enough to read out the device feature register
-	uint32_t virtioResetInitAndReadFeatureBits();
-
 	// Virtio configuration space functions called from start():
 	
-	/// Creates the memory mapping for the virtio configuration space
-	bool mapVirtioConfigurationSpace();
 	/// Processes the various optional features which affect the layout of the generic virtio configuration header
 	/** Returns where the standard configuration ends, and by implication, where
 	 * the device-specific region starts. Sets dev_features_hi. */
 	uint16_t virtioReadOptionalConfigFieldsGetDeviceSpecificOffset();
 	/// Read out or generate the MAC address, depending on what the hardware decides
-	void determineMACAddress(uint16_t device_specific_offset);
+	void determineMACAddress();
 	/// Checks link status, if possible, and records its configuration space offset for later updates
-	void detectLinkStatusFeature(uint16_t device_specific_offset);
+	void detectLinkStatusFeature();
 	
 	// Virtqueue management functions:
 	
@@ -249,13 +225,18 @@ protected:
 	
 	/// Secondary interrupt. Forwards to the member function of the same name.
 	static void interruptAction(OSObject* me, IOInterruptEventSource* source, int count);
-	/// Actually performs
+	static void configChangeHandler(OSObject* target, VirtioDevice* source);
+
+	static void receiveQueueCompletion(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written);
+	static void transmitQueueCompletion(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written);
 	void interruptAction(IOInterruptEventSource* source, int count);
 	
+	void handleReceivedPacket(virtio_net_packet* packet);
 	void handleReceivedPackets();
 	
 	/// Frees any packets marked as "used" in the transmit queue and frees their descriptors
 	void releaseSentPackets(bool from_debugger = false);
+	void releaseSentPacket(virtio_net_packet* packet);
 	
 	void flushPacketPool();
 
@@ -266,17 +247,16 @@ protected:
 	static const bool pref_allow_offloading_default = true;
 	
 	/// The provider device. NOT retained.
-	IOPCIDevice* pci_dev;
-	/// I/O space mapping of the virtio PCI header registers
-	IOMemoryMap* pci_virtio_header_iomap;
+	VirtioDevice* virtio_dev;
 	
 	/// The standard bit map of virtio device features
 	uint32_t dev_feature_bitmap;
-	
-	bool should_disable_io;
-	
+		
 	IOEthernetInterface* interface;
 	
+	static const unsigned RECEIVE_QUEUE_INDEX = 0;
+	static const unsigned TRANSMIT_QUEUE_INDEX = 1;
+
 	virtio_net_virtqueue rx_queue;
 	virtio_net_virtqueue tx_queue;
 	
@@ -286,11 +266,8 @@ protected:
 	 * or generated randomly. */
 	bool mac_address_is_valid;
 	
-	/// 0 if reading status is not supported
-	uint16_t status_field_offset;
-	
-	/// ISR status register value in last successful interrupt
-	uint8_t last_isr;
+	/// VIRTIO__NET_F_STATUS feature has been negotiated
+	bool feature_status_field;
 	
 	/// true if the device supports the VIRTIO_F_NOTIFY_ON_EMPTY feature
 	bool feature_notify_on_empty;

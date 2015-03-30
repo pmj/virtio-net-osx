@@ -1,4 +1,598 @@
-/* Copyright 2011, 2013 Phil Jordan <phil@philjordan.eu>
+//
+//  VirtioNetworkDevice.cpp
+//  virtio-osx
+//
+//  Created by Laura Dennis-Jordan on 27/03/2015.
+//
+//
+
+#include "VirtioNetworkDevice.h"
+#include "VirtioDevice.h"
+#include <IOKit/IOLib.h>
+#include <IOKit/IOCommandGate.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
+#include <IOKit/network/IOEthernetInterface.h>
+#include "PJMbufMemoryDescriptor.h"
+#include "SSDCMultiSubrangeMemoryDescriptor.h"
+
+OSDefineMetaClassAndStructors(VirtioNetworkDevice, IOEthernetController);
+
+namespace VirtioNetworkDeviceFeatures
+{
+	enum VirtioNetworkDeviceFeatureBits
+	{
+	
+		VIRTIO_NET_F_CSUM = 0,					// Device handles packets with partial checksum
+		VIRTIO_NET_F_GUEST_CSUM = 1,			// Driver handles packets with partial checksum
+		VIRTIO_NET_F_CTRL_GUEST_OFFLOADS = 2,	// Control channel offloads reconfiguration support
+		VIRTIO_NET_F_MAC = 5,					// Device has given MAC address.
+		VIRTIO_NET_F_GUEST_TSO4 = 7,			// Driver can receive TSOv4.
+		VIRTIO_NET_F_GUEST_TSO6 = 8,			// Driver can receive TSOv6.
+		VIRTIO_NET_F_GUEST_ECN = 9,				// Driver can receive TSO with ECN.
+		VIRTIO_NET_F_GUEST_UFO = 10,			// Driver can receive UFO.
+		VIRTIO_NET_F_HOST_TSO4 = 11,			// Device can receive TSOv4.
+		VIRTIO_NET_F_HOST_TSO6 = 12,			// Device can receive TSOv6.
+		VIRTIO_NET_F_HOST_ECN = 13,				// Device can receive TSO with ECN.
+		VIRTIO_NET_F_HOST_UFO = 14,				// Device can receive UFO.
+		VIRTIO_NET_F_MRG_RXBUF = 15,			// Driver can merge receive buffers.
+		VIRTIO_NET_F_STATUS = 16,				// Configuration status field is available.
+		VIRTIO_NET_F_CTRL_VQ = 17,				// Control channel is available.
+		VIRTIO_NET_F_CTRL_RX = 18,				// Control channel RX mode support.
+		VIRTIO_NET_F_CTRL_VLAN = 19,			// Control channel VLAN filtering.
+		VIRTIO_NET_F_GUEST_ANNOUNCE = 21,		// Guest can send gratuitous packets (announce itself upon request)
+	};
+	enum VirtioLegacyNetworkDeviceFeatureBits
+	{
+		VIRTIO_NET_F_GSO = 6,				// Device handles packets with any GSO type.
+	};
+}
+
+
+struct VirtioNetworkHeader
+{
+	uint8_t flags;
+	uint8_t gso_type;
+	uint16_t hdr_len;
+	uint16_t gso_size;
+	uint16_t csum_start;
+	uint16_t csum_offset;
+	/* Only if	VIRTIO_NET_F_MRG_RXBUF: */
+	uint16_t num_buffers[];
+};
+
+struct VirtioNetworkPacket
+{
+	union
+	{
+		// Used as the first virtqueue buffer.
+		VirtioNetworkHeader header;
+		// When dequeued by the debugger, the packet is not freed but simply linked to the
+		VirtioNetworkPacket* next_free;
+	};
+	// The mbuf used for the packet body
+	mbuf_t mbuf;
+	// The memory descriptor holding this packet structure
+	IOBufferMemoryDescriptor* mem;
+	/// Memory descriptor for the mbuf's data
+	PJMbufMemoryDescriptor* mbuf_md;
+	/// Memory descriptor combining the tx/rx header buffer and mbuf
+	SSDCMultiSubrangeMemoryDescriptor* dma_md;
+	
+	IODMACommand* dma_cmd;
+	
+	SSDCMemoryDescriptorSubrange dma_md_subranges[2];
+};
+
+
+
+bool VirtioNetworkDevice::start(IOService* provider)
+{
+	if (!IOService::start(provider))
+	{
+		return false;
+	}
+	VirtioDevice* virtio = OSDynamicCast(VirtioDevice, provider);
+	if (virtio == NULL)
+		return false;
+	
+	if (!virtio->open(this))
+		return false;
+	
+	virtio->resetDevice();
+	
+	uint32_t dev_features = virtio->supportedFeatures();
+	uint32_t use_features = dev_features & VirtioNetworkDeviceFeatures::VIRTIO_NET_F_GSO;
+	
+	bool ok = virtio->requestFeatures(use_features);
+	if (!ok)
+	{
+		virtio->failDevice();
+		virtio->close(this);
+		return false;
+	}
+	
+	IOReturn result = virtio->setupVirtqueues(2);
+	if (result != kIOReturnSuccess)
+	{
+		virtio->failDevice();
+		virtio->close(this);
+		return false;
+	}
+	
+	IOWorkLoop* work_loop = this->getWorkLoop();
+	this->command_gate = IOCommandGate::commandGate(this);
+	this->command_gate->setWorkLoop(work_loop);
+	
+	this->virtio_device = virtio;
+	this->packet_bufdesc_pool = OSArray::withCapacity(16);
+
+
+
+/*
+	
+	UInt32 mtu = 0;
+	if (kIOReturnSuccess != getMaxPacketSize(&mtu))
+	{	
+		VIOLog("VirtioNetworkDevice::start: Failed to determine MTU!\n");
+	}
+	else
+	{
+		PJLogVerbose("VirtioNetworkDevice::start: Reported MTU: %lu bytes\n", static_cast<size_t>(mtu));
+	}
+
+	
+ 
+	if (!this->startWithIOEnabled())
+	{
+		if (this->should_disable_io)
+			pci->setIOEnable(false);
+		this->should_disable_io = false;
+		return false;
+	}
+	*/
+	return true;
+}
+
+void VirtioNetworkDevice::deviceConfigChangeAction(OSObject* target, VirtioDevice* source)
+{
+	OSDynamicCast(VirtioNetworkDevice, target)->deviceConfigChangeAction(source);
+}
+
+void VirtioNetworkDevice::deviceConfigChangeAction(VirtioDevice* source)
+{
+	uint8_t  mac[6];
+	uint16_t status;
+	
+	IOLog("VirtioNetworkDevice::deviceConfigChangeAction(): mac1 = %u, mac2 = %u, mac3 = %u, mac4 = %u, mac5 = %u, mac6 = %u status = %u\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],status);
+	//this->inflateDeflateIfNecessary(num_pages);
+}
+
+
+void VirtioNetworkDevice::determineMACAddress(uint16_t device_specific_offset)
+{
+	// sort out mac address
+	if (dev_feature_bitmap & VirtioNetworkDeviceFeatures::VIRTIO_NET_F_MAC)
+	{
+		for (unsigned i = 0; i < sizeof(mac_address); ++i)
+		{
+			mac_address.bytes[i] = virtioHeaderRead8(device_specific_offset + offsetof(virtio_net_config, mac[i]));
+		}
+		PJLogVerbose("virtio-net start(): Determined MAC address: %02X:%02X:%02X:%02X:%02X:%02X\n",
+			mac_address.bytes[0], mac_address.bytes[1], mac_address.bytes[2],
+			mac_address.bytes[3], mac_address.bytes[4], mac_address.bytes[5]);
+	}
+	else
+	{
+		// generate random MAC address
+		uint32_t rnd1 = random();
+		uint32_t rnd2 = random();
+		mac_address.bytes[0] = (rnd1 & 0xfe) | 0x02; // ensure multicast bit is off and local assignment bit is on
+		mac_address.bytes[1] = (rnd1 >> 8) & 0xff;
+		mac_address.bytes[2] = ((rnd1 >> 16) ^ rnd2) & 0xff;
+		mac_address.bytes[3] = ((rnd1 >> 24) ^ (rnd2 >> 8)) & 0xff;
+		mac_address.bytes[4] = (rnd2 >> 16) & 0xff;
+		mac_address.bytes[5] = (rnd2 >> 24) & 0xff;
+		
+		VIOLog("virtio-net start(): Device does not specify its MAC address, randomly generated %02X:%02X:%02X:%02X:%02X:%02X\n",
+			mac_address.bytes[0], mac_address.bytes[1], mac_address.bytes[2],
+			mac_address.bytes[3], mac_address.bytes[4], mac_address.bytes[5]);
+	}
+	mac_address_is_valid = true;
+}
+
+// check link status, if possible, and record its configuration space offset for later updates
+void PJVirtioNet::detectLinkStatusFeature(uint16_t device_specific_offset)
+{
+	status_field_offset = 0;
+	bool link_is_up = true;
+	if (dev_feature_bitmap & VIRTIO_NET_F_STATUS)
+	{
+		status_field_offset = device_specific_offset + offsetof(virtio_net_config, status);
+		uint16_t status = readStatus();
+		PJLogVerbose("virtio-net start(): Link status field 0x%04X (link %s)\n",
+			status, (status & VIRTIO_NET_S_LINK_UP) ? "up" : "down");
+		link_is_up = (status & VIRTIO_NET_S_LINK_UP) != 0;
+	}
+	setLinkStatus((link_is_up ? kIONetworkLinkActive : 0) | kIONetworkLinkValid);
+}
+bool PJVirtioNet::beginHandlingInterrupts()
+{
+	PJLogVerbose("virtio-net beginHandlingInterrupts()\n");
+	if (!pci_dev)
+	{
+		VIOLog("virtio-net beginHandlingInterrupts(): Error! PCI device must be known for generating interrupts.\n");
+		return false;
+	}
+	
+	// Message signaled interrupts (MSI) are more efficient than the normal broadcast ones, so let's try to use them
+	int msi_index = -1;
+	int intr_index = 0;
+	
+	// keep trying interrupt source indices until we run out or find an MSI one
+	while (intr_index >= 0)
+	{
+		int intr_type = 0;
+		IOReturn ret = pci_dev->getInterruptType(intr_index, &intr_type);
+		if (ret != kIOReturnSuccess)
+			break;
+			
+		if (intr_type & kIOInterruptTypePCIMessaged)
+		{
+			// found MSI interrupt source
+			msi_index = intr_index;
+			break;
+		}
+		++intr_index;
+	}
+	
+	if (msi_index >= 0)
+	{
+		intr_index = msi_index;
+		VIOLog("virtio-net beginHandlingInterrupts(): Enabled message signaled interrupts (index %d).\n", intr_index);
+	}
+	else
+	{
+		intr_index = 0;
+	}
+
+	
+	intr_event_source = IOFilterInterruptEventSource::filterInterruptEventSource(this, &interruptAction, &interruptFilter, pci_dev, intr_index);
+	if (!intr_event_source)
+	{
+		VIOLog("virtio-net beginHandlingInterrupts(): Error! %s interrupt event source failed.\n", intr_event_source ? "Initialising" : "Allocating");
+		OSSafeReleaseNULL(intr_event_source);
+		return false;
+	}
+	if (kIOReturnSuccess != work_loop->addEventSource(intr_event_source))
+	{
+		VIOLog("virtio-net beginHandlingInterrupts(): Error! Adding interrupt event source to work loop failed.\n");
+		OSSafeReleaseNULL(intr_event_source);
+		return false;
+	}
+	intr_event_source->enable();
+	PJLogVerbose("virtio-net beginHandlingInterrupts(): now handling interrupts, good to go.\n");	
+	return true;
+}
+
+void PJVirtioNet::endHandlingInterrupts()
+{
+	if (!intr_event_source)
+	{
+		VIOLog("virtio-net endHandlingInterrupts(): Warning! Interrupt event source does not exist.\n");
+		return;
+	}
+	
+	this->intr_event_source->disable();
+	work_loop->removeEventSource(intr_event_source);
+	OSSafeReleaseNULL(intr_event_source);
+}
+
+
+bool PJVirtioNet::configureInterface(IONetworkInterface *netif)
+{
+	PJLogVerbose("virtio-net configureInterface([%s] @ %p)\n", netif ? netif->getMetaClass()->getClassName() : "null", netif);
+	if (!super::configureInterface(netif))
+	{
+		VIOLog("virtio-net configureInterface(): super failed\n");
+		return false;
+	}
+	return true;
+}
+
+IOReturn PJVirtioNet::getPacketFilters(const OSSymbol *group, UInt32 *filters) const
+{
+	PJLogVerbose("virtio-net getPacketFilters()\n");
+	return super::getPacketFilters(group, filters);
+}
+
+int32_t PJVirtioNet::readStatus()
+{
+	if (!status_field_offset) return -1;
+	return virtioHeaderRead16(status_field_offset);
+}
+IOOutputQueue* PJVirtioNet::createOutputQueue()
+{
+	/* For now, go with a gated output queue, as this is the simplest option. Later
+	 * on, we can provide more granular access to the virtqueue mechanism. */
+	IOGatedOutputQueue* queue = IOGatedOutputQueue::withTarget(this, this->getWorkLoop(), 0 /* capacity = 0: Initially, we can't yet send packets */);
+	PJLogVerbose("virtio-net createOutputQueue(): %p\n", queue);
+	return queue;
+}
+
+IOReturn PJVirtioNet::enable(IOKernelDebugger *debugger)
+{
+	return runInCommandGate<IOKernelDebugger, &PJVirtioNet::gatedEnableDebugger>(debugger);
+}
+IOReturn PJVirtioNet::gatedEnableDebugger(IOKernelDebugger* debugger)
+{
+	if (!this->debugger || !this->debugger_transmit_packet)
+		return kIOReturnError;
+	if (driver_state == kDriverStateEnabled)
+	{
+		// already fully up and running anyway
+		driver_state = kDriverStateEnabledBoth;
+		VIOLog("virtio-net enable(): already enabled for normal interface clients, now also enabled for debugger client.\n");
+		return kIOReturnSuccess;
+	}
+	else if (driver_state == kDriverStateEnabledBoth || driver_state == kDriverStateEnabledDebugging)
+	{
+		VIOLog("virtio-net enable(): already enabled for debugging, enable() called a second time.\n");
+		return kIOReturnSuccess;
+	}
+	
+	if (driver_state != kDriverStateStarted)
+	{
+		VIOLog("virtio-net enable(): Invalid state (%d) for enabling debugger.\n", driver_state);
+		return kIOReturnInvalid;
+	}
+	
+	bool ok = enablePartial();
+#ifndef PJ_VIRTIO_NET_VERBOSE
+	if (!ok)
+#endif
+		VIOLog("virtio-net enable(): Starting debugger %s.\n", ok ? "succeeded" : "failed");
+	driver_state = ok ? kDriverStateEnabledDebugging : kDriverStateEnableFailed;
+	return ok ? kIOReturnSuccess : kIOReturnError;
+}
+bool PJVirtioNet::enablePartial()
+{
+	if (!pci_dev->open(this))
+	{
+		VIOLog("virtio-net enable(): Opening PCI device failed.\n");
+		return false;
+	}
+	if (!mapVirtioConfigurationSpace())
+		return false;
+
+	// Re-initialise the device
+	uint32_t dev_features = virtioResetInitAndReadFeatureBits();
+
+	// Initialise the receive and transmit virtqueues
+	if (!setupVirtqueue(0, rx_queue))
+		return failDevice(), false;
+	PJLogVerbose("virtio-net enable(): Initialised virtqueue 0 (receive queue) with %llu bytes (%u entries) at %llX\n",
+		static_cast<uint64_t>(rx_queue.buf->getLength()), rx_queue.num, rx_queue.buf->getPhysicalSegment(0, NULL, 0));
+
+	if (!setupVirtqueue(1, tx_queue))
+		return failDevice(), kIOReturnError;
+	PJLogVerbose("virtio-net enable(): Initialised virtqueue 1 (transmit queue) with %llu bytes (%u entries) at %llX\n",
+		static_cast<uint64_t>(tx_queue.buf->getLength()), tx_queue.num, tx_queue.buf->getPhysicalSegment(0, NULL, 0));
+	// Don't support VIRTIO_NET_F_CTRL_VQ for now
+	
+			
+	// write back supported features
+	uint32_t supported_features = dev_features &
+		(VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | (feature_checksum_offload ? (VIRTIO_NET_F_CSUM | VIRTIO_NET_F_HOST_TSO4) : 0));
+	virtioHeaderWriteLE32(VIRTIO_PCI_CONF_OFFSET_GUEST_FEATURE_BITS_0_31, supported_features);
+	PJLogVerbose("virtio-net enable(): Wrote driver-supported feature bits: 0x%08X\n", supported_features);
+	
+	// tell device we're ready
+	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_DRIVER_OK);
+	PJLogVerbose("virtio-net enable(): Device set to 'driver ok' state.\n");
+
+	// The virtqueues can now be used
+	
+	// fill receive queue with as many empty packets as possible
+	if (!populateReceiveBuffers())
+	{
+		// even if we couldn't fill all of it because we ran out of memory, treat partial success as OK.
+		if (rx_queue.num_free_desc >= rx_queue.num)
+		{
+			// really memory-starved, sorry!
+			driver_state = kDriverStateEnableFailedOutOfMemory;
+			VIOLog("virtio-net enable(): Failed to populate receive buffers: out of memory.\n");
+			failDevice(); // stop producing interrupts
+			return kIOReturnNoMemory;
+		}
+	}
+	PJLogVerbose("virtio-net enable(): Populated receive buffers: %u free descriptors left, avail idx %u\n",
+		rx_queue.num_free_desc, rx_queue.avail->idx);
+
+	return true;
+}
+
+IOReturn PJVirtioNet::enable(IONetworkInterface* interface)
+{
+	return runInCommandGate<IONetworkInterface, &PJVirtioNet::gatedEnableInterface>(interface);
+}
+
+IOReturn PJVirtioNet::selectMedium(const IONetworkMedium* medium)
+{
+	setSelectedMedium(medium);
+	return kIOReturnSuccess;
+}
+
+static bool virtio_net_add_medium(OSDictionary* medium_dict, IOMediumType type, uint64_t speed)
+{
+	IONetworkMedium* medium = IONetworkMedium::medium(type, 0);
+	if (!medium)
+		return false;
+	bool ok = IONetworkMedium::addMedium(medium_dict, medium);
+	medium->release();
+	return ok;
+}
+
+bool PJVirtioNet::createMediumTable()
+{
+	OSDictionary* dict = OSDictionary::withCapacity(2);
+	if (!dict)
+	{
+		VIOLog("virtio-net createMediumTable: Failed to allocate dictionary.\n");
+		return false;
+	}
+	
+	bool added = true;
+	added = added && virtio_net_add_medium(dict, kIOMediumEthernetNone, 0);
+	added = added && virtio_net_add_medium(dict, kIOMediumEthernetAuto, 0);
+	if (!added)
+	{
+		VIOLog("virtio-net createMediumTable: Failed to allocate and add media to table.\n");
+		dict->release();
+		return false;
+	}
+	
+	if (!publishMediumDictionary(dict))
+	{
+		VIOLog("virtio-net createMediumTable: Failed to publish medium dictionary.\n");
+		dict->release();
+		return false;
+	}
+	dict->release();
+
+	const OSDictionary* media = getMediumDictionary();
+	IONetworkMedium* medium = media ? IONetworkMedium::getMediumWithType(media, kIOMediumEthernetAuto) : NULL;
+	if (medium)
+		setCurrentMedium(medium);
+	else
+		VIOLog("virtio-net createMediumTable: Warning! Failed to locate current medium in table.");
+	
+	return true;
+}
+
+
+IOReturn PJVirtioNet::gatedEnableInterface(IONetworkInterface* interface)
+{
+	PJLogVerbose("virtio-net enable()\n");
+	if (driver_state == kDriverStateEnabledBoth || driver_state == kDriverStateEnabled)
+		return kIOReturnSuccess;
+	if (driver_state != kDriverStateStarted && driver_state != kDriverStateEnabledDebugging)
+	{
+		VIOLog("virtio-net enable(): Bad driver state %d (expected %d or %d), aborting.\n", driver_state, kDriverStateStarted, kDriverStateEnabledDebugging);
+		return kIOReturnInvalid;
+	}
+	bool has_debugger = (driver_state == kDriverStateEnabledDebugging);
+	if (driver_state != kDriverStateEnabledDebugging)
+		driver_state = kDriverStateEnableFailed;
+	if (interface != this->interface)
+	{
+		VIOLog("virtio-net enable(): unknown interface %p (expected %p)\n", interface, this->interface);
+		return kIOReturnBadArgument;
+	}
+	
+	if (driver_state != kDriverStateEnabledDebugging && !enablePartial())
+	{
+		driver_state = kDriverStateEnableFailed;
+		VIOLog("virtio-net enable(): Basic device initialisation failed.\n");
+		return kIOReturnError;
+	}
+	driver_state = kDriverStateEnableFailed;
+	
+	if (!createMediumTable())
+	{
+		VIOLog("virtio-net enable(): Failed to set up interface media table\n");
+		return kIOReturnNoMemory;
+	}
+
+	// start handling interrupts now that the internal data structures are set up
+	if (!beginHandlingInterrupts())
+		return failDevice(), false;
+
+	// enable interrupts on the appropriate queues
+	rx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
+	if (!feature_notify_on_empty)
+		tx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
+	OSSynchronizeIO();
+	
+	// enable the output queue
+	IOOutputQueue* output_queue = getOutputQueue();
+	if (!output_queue)
+		return failDevice(), kIOReturnError;
+	uint32_t capacity = max(16, tx_queue.num / 4); // each packet takes 2 buffers, try to always fill up half the virtqueue, hence a quarter
+	output_queue->setCapacity(capacity);
+	output_queue->start();
+	
+	updateLinkStatus();
+	
+	driver_state = has_debugger ? kDriverStateEnabledBoth : kDriverStateEnabled;
+
+	return kIOReturnSuccess;
+}
+void PJVirtioNet::flushPacketPool()
+{
+	if (packet_bufdesc_pool)
+	{
+		while (OSObject* obj = packet_bufdesc_pool->getAnyObject())
+		{
+			if (IOBufferMemoryDescriptor* buf = OSDynamicCast(IOBufferMemoryDescriptor, obj))
+			{
+				virtio_net_packet* packet = static_cast<virtio_net_packet*>(buf->getBytesNoCopy());
+				OSSafeReleaseNULL(packet->dma_cmd);
+				OSSafeReleaseNULL(packet->dma_md);
+				OSSafeReleaseNULL(packet->mbuf_md);
+			}
+			packet_bufdesc_pool->removeObject(obj);
+		}
+	}
+}
+
+
+void VirtioNetworkDevice::stop(IOService* provider)
+{
+}
+
+
+
+// DON'T ADD ANYTHING BELOW THIS
+
+#ifdef VIRTIO_LOG_TERMINATION
+bool VirtioNetworkDevice::terminateClient(IOService * client, IOOptionBits options)
+{
+	IOLog("VirtioNetworkDevice[%p]::terminateClient() client = %p, options = %x\n", this, client, options);
+	bool res = IOService::terminateClient(client, options);
+	IOLog("VirtioNetworkDevice[%p]::terminateClient() done: %s\n", this, res ? "true" : "false");
+	return res;
+}
+
+bool VirtioNetworkDevice::requestTerminate( IOService * provider, IOOptionBits options )
+{
+	IOLog("VirtioNetworkDevice[%p]::requestTerminate() provider = %p, options = %x\n", this, provider, options);
+	bool res = IOService::requestTerminate(provider, options);
+	IOLog("VirtioNetworkDevice[%p]::requestTerminate() done: %s\n", this, res ? "true" : "false");
+	return res;
+}
+
+bool VirtioNetworkDevice::willTerminate( IOService * provider, IOOptionBits options )
+{
+	IOLog("VirtioNetworkDevice[%p]::willTerminate() provider = %p, options = %x\n", this, provider, options);
+	bool res = IOService::willTerminate(provider, options);
+	IOLog("VirtioNetworkDevice[%p]::willTerminate() done: %s\n", this, res ? "true" : "false");
+	return res;
+}
+
+bool VirtioNetworkDevice::terminate( IOOptionBits options )
+{
+	IOLog("VirtioNetworkDevice[%p]::terminate() options = %x\n", this, options);
+	bool res = IOService::terminate(options);
+	IOLog("VirtioNetworkDevice[%p]::terminate() done: %s\n", this, res ? "true" : "false");
+	return res;
+}
+#endif //ifdef VIRTIO_LOG_TERMINATION
+
+
+
+/*
+#include "VirtioNetworkDevice.h"
+ Copyright 2011, 2013 Phil Jordan <phil@philjordan.eu>
  * This code made available under the GNU LGPL
  * (GNU Library/Lesser General Public License)
  * A copy of this license can be found in the LICENSE file provided together
@@ -18,7 +612,7 @@
  * contact the author at phil@philjordan.eu - other licensing options are available.
  */
 
-
+/*
 #include "virtio_net.h"
 #include "PJMbufMemoryDescriptor.h"
 #include "SSDCMultiSubrangeMemoryDescriptor.h"
@@ -52,7 +646,7 @@
 OSDefineMetaClassAndStructors(PJVirtioNet, IOEthernetController);
 #define super IOEthernetController
 
-#define PJ_VIRTIO_NET_VERBOSE
+//#define PJ_VIRTIO_NET_VERBOSE
 #define VIOLog IOLog
 
 
@@ -63,86 +657,7 @@ OSDefineMetaClassAndStructors(PJVirtioNet, IOEthernetController);
 #endif
 
 /*
-#undef OSSafeReleaseNULL
-#define OSSafeReleaseNULL(inst)   do { if (inst) { if (inst->getRetainCount() == 1) { VIOLog("virtio-net OSSafeReleaseNULL %s:%u: releasing %p (%lu+ bytes)\n", __FILE__, __LINE__, (inst), sizeof(*(inst))); } (inst)->release(); } (inst) = NULL; } while (0)
-//*/
 
-template <typename T> static T* PJZMallocArray(size_t length)
-{
-	const size_t bytes = sizeof(T) * length;
-	void* const mem = IOMalloc(bytes);
-	if (!mem) return NULL;
-	PJLogVerbose("virtio-net: allocated %lu bytes at %p\n", bytes, mem);
-	memset(mem, 0, bytes);
-	return static_cast<T*>(mem);
-}
-
-template <typename T> static void PJFreeArray(T* array, size_t length)
-{
-	const size_t bytes = sizeof(T) * length;
-	PJLogVerbose("virtio-net: freeing %lu bytes at %p\n", bytes, array);
-	IOFree(array, bytes);
-}
-
-template <typename T> static T* PJZMalloc()
-{
-	const size_t bytes = sizeof(T);
-	void* const mem = IOMalloc(bytes);
-	if (!mem) return NULL;
-	memset(mem, 0, bytes);
-	return static_cast<T*>(mem);
-}
-template <typename T> static void PJFree(T* obj)
-{
-	const size_t bytes = sizeof(T);
-	IOFree(obj, bytes);
-}
-
-
-static inline bool is_pow2(uint16_t num)
-{
-	return 0u == (num & (num - 1));
-}
-
-static void virtio_net_log_property_dict(OSDictionary* props)
-{
-	VIOLog("virtio-net: begin property dictionary:\n");
-	if (props)
-	{
-		OSCollectionIterator* it = OSCollectionIterator::withCollection(props);
-		if (it)
-		{
-			while (true)
-			{
-				OSObject* key = it->getNextObject();
-				if (!key)
-					break;
-				OSString* keystr = OSDynamicCast(OSString, key);
-				OSObject* val = props->getObject(keystr);
-				OSString* str = OSDynamicCast(OSString, val);
-				OSNumber* num = OSDynamicCast(OSNumber, val);
-				if (str)
-				{
-					VIOLog("%s -> '%s'\n", keystr->getCStringNoCopy(), str->getCStringNoCopy());
-				}
-				else if (num)
-				{
-					VIOLog("%s -> %llu\n", keystr->getCStringNoCopy(), num->unsigned64BitValue());
-				}
-				else if (val)
-				{
-					VIOLog("%s -> [%s]\n", keystr->getCStringNoCopy(), val->getMetaClass()->getClassName());
-				}
-				else
-				{
-					VIOLog("%s -> null\n", keystr->getCStringNoCopy());
-				}
-			}
-			it->release();
-		}
-	}
-	VIOLog("virtio-net: end property dictionary\n");
-}
 
 #ifdef VIRTIO_NET_SINGLE_INSTANCE
 static SInt32 instances = 0;
@@ -154,6 +669,14 @@ bool PJVirtioNet::init(OSDictionary* properties)
 	if (OSIncrementAtomic(&instances) > 0)
 		return false;
 #endif
+	static bool has_shown_copyright_notice = false;
+	if (!has_shown_copyright_notice)
+	{
+		VIOLog("virtio-net driver: Copyright 2011, 2013 Phil Jordan <phil@philjordan.eu>; all rights reserved. Built %s %s.\n"
+			"virtio specification and header: Copyright 2007, 2009, IBM Corporation and Copyright 2011, Red Hat, Inc; all rights reserved.\n"
+			"For details, see the LICENSE and readme.md files in virtio-net KEXT bundle.\n", __DATE__, __TIME__);
+		has_shown_copyright_notice = true;
+	}
 
 	PJLogVerbose("virtio-net init()\n");
 	bool ok = super::init(properties);
@@ -166,11 +689,7 @@ bool PJVirtioNet::init(OSDictionary* properties)
 		pref_allow_offloading = allow_offloading_val->getValue();
 		VIOLog("virtio-net: Offloading checksumming and segmentation %sALLOWED by plist preferences.\n", pref_allow_offloading ? "" : "DIS");
 	}
-	else
-	{
-		pref_allow_offloading = pref_allow_offloading_default;
-	}
-	virtio_net_log_property_dict(properties);
+	
 	
 	transmit_packets_to_free = NULL;
 	driver_state = kDriverStateInitial;
@@ -179,35 +698,152 @@ bool PJVirtioNet::init(OSDictionary* properties)
 	if (!packet_bufdesc_pool)
 		return false;
 		
+	pci_dev = NULL;
+	rx_queue.buf = NULL;
+	this->pci_virtio_header_iomap = NULL;
 	return true;
+}
+
+static int64_t pci_id_data_to_uint(OSObject* property_obj)
+{
+	OSData* data = OSDynamicCast(OSData, property_obj);
+	if (!data)
+		return -1;
+	
+	int64_t id = -1;
+	const void* mem = data->getBytesNoCopy();
+	if (data->getLength() >= 4)
+	{
+		id = static_cast<uint32_t>(OSReadLittleInt32(mem, 0));
+	}
+	else if (data->getLength() == 2)
+	{
+		id = static_cast<uint16_t>(OSReadLittleInt16(mem, 0));
+	}
+	return id;
+}
+
+namespace
+{
+	extern const size_t VIRTIO_PCI_HEADER_MIN_LEN;
 }
 
 IOService* PJVirtioNet::probe(IOService* provider, SInt32* score)
 {
 	PJLogVerbose("virtio-net probe()\n");
-	VirtioDevice* virtio_dev = OSDynamicCast(VirtioDevice, provider);
-	if (!virtio_dev)
+	IOPCIDevice* pci_dev = OSDynamicCast(IOPCIDevice, provider);
+	if (!pci_dev)
 		return NULL;
 	
 	if (driver_state != kDriverStateInitial)
 		VIOLog("virtio-net probe(): Warning: Unexpected driver state %d\n", driver_state);
 	
-	// Check it's an ethernet device
-	if (virtio_dev->getVirtioDeviceType() != 1)
-		return nullptr;
+	OSObject* vendor_id = pci_dev->getProperty("vendor-id");
+	OSObject* device_id = pci_dev->getProperty("device-id");
+	OSObject* revision_id = pci_dev->getProperty("revision-id");
+	OSObject* subsystem_vendor_id = pci_dev->getProperty("subsystem-vendor-id");
+	OSObject* subsystem_id = pci_dev->getProperty("subsystem-id");
+	
+	int64_t vid = -1, did = -1, revid = -1, sub_id = -1, sub_vid = -1;
+	vid = pci_id_data_to_uint(vendor_id);
+	PJLogVerbose("virtio-net probe(): vendor ID = %lld (0x%llX)\n", vid, vid);
+	did = pci_id_data_to_uint(device_id);
+	PJLogVerbose("virtio-net probe(): device ID = %lld (0x%llX)\n", did, did);
+	revid = pci_id_data_to_uint(revision_id);
+	PJLogVerbose("virtio-net probe(): revision ID = %lld (0x%llX)\n", revid, revid);
+	sub_id = pci_id_data_to_uint(subsystem_id);
+	PJLogVerbose("virtio-net probe(): subsystem ID = %lld (0x%llX)\n", sub_id, sub_id);
+	sub_vid = pci_id_data_to_uint(subsystem_vendor_id);
+	PJLogVerbose("virtio-net probe(): subsystem vendor ID = %lld (0x%llX)\n", sub_vid, sub_vid);
+		
+	if (vid != 0x1AF4)
+	{
+		VIOLog("virtio-net probe(): Vendor ID does not match 0x1AF4, device unsupported.\n");
+		return NULL;
+	}
+	if (did < 0x1000 || did > 0x103F)
+	{
+		VIOLog("virtio-net probe(): Device ID does not lie in the range 0x1000 to 0x103F (inclusive), device unsupported.\n");
+		return NULL;
+	}
+	if (revid != 0)
+	{
+		VIOLog("virtio-net probe(): Only virtio devices with revision ID 0 are supported by this driver, this one has revision %" PRId64 ".\n", revid);
+		return NULL;
+	}
+	if (sub_id != 1)
+	{
+		VIOLog("Subsystem ID for device is %" PRId64 "Only virtio devices with subsystem ID 1 (= network card) are supported by this driver.\n", sub_id);
+		return NULL;
+	}
+	if (sub_vid != vid)
+	{
+		VIOLog("Warning: subsystem vendor ID (0x%04X) should normally match device vendor ID (0x%04X).\n", (unsigned)sub_vid, (unsigned)vid);
+	}
+
+	// check the BAR0 range is in the I/O space and has the right minimum length
+	if (0 == (kIOPCIIOSpace & pci_dev->configRead32(kIOPCIConfigBaseAddress0))) // is there a higher-level way of doing this?
+	{
+		VIOLog("virtio-net probe(): BAR0 indicates the first device range is in the memory address space, this driver expects an I/O range.\n");
+		return NULL;
+	}
+	if (IODeviceMemory* header_range = pci_dev->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0))
+	{
+		size_t header_len = header_range->getLength();
+		if (header_len < VIRTIO_PCI_HEADER_MIN_LEN)
+		{
+			IOLog("virtio-net probe(): Virtio header I/O range too short. Expected at least %lu bytes, got %lu\n", VIRTIO_PCI_HEADER_MIN_LEN, header_len);
+			return NULL;
+		}
+	}
+	else
+	{
+		IOLog("virtio-net probe(): Failed to get virtio header I/O range\n");
+		return NULL;
+	}
 
 	return this;
 }
 
+enum VirtioPCIHeaderOffsets
+{
+	VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31 = 0,
+	VIRTIO_PCI_CONF_OFFSET_GUEST_FEATURE_BITS_0_31 = 4 + VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31,
+	VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS = 4 + VIRTIO_PCI_CONF_OFFSET_GUEST_FEATURE_BITS_0_31,
+	VIRTIO_PCI_CONF_OFFSET_QUEUE_SIZE = 4 + VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS,
+	VIRTIO_PCI_CONF_OFFSET_QUEUE_SELECT = 2 + VIRTIO_PCI_CONF_OFFSET_QUEUE_SIZE,
+	VIRTIO_PCI_CONF_OFFSET_QUEUE_NOTIFY = 2 + VIRTIO_PCI_CONF_OFFSET_QUEUE_SELECT,
+	VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS = 2 + VIRTIO_PCI_CONF_OFFSET_QUEUE_NOTIFY,
+	VIRTIO_PCI_CONF_OFFSET_ISR_STATUS = 1 + VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS,
+	VIRTIO_PCI_CONF_OFFSET_END_HEADER = 1 + VIRTIO_PCI_CONF_OFFSET_ISR_STATUS
+};
+
+namespace {
+	const size_t VIRTIO_PCI_HEADER_MIN_LEN = VIRTIO_PCI_CONF_OFFSET_END_HEADER;
+}
+#define VIRTIO_PCI_DEVICE_ISR_USED 0x01
+#define VIRTIO_PCI_DEVICE_ISR_CONF_CHANGE 0x02
+
+/// Virtio Spec 0.9.5, section 2.2.2.1, "Device Status".
+/** To be used in the "Device Status" configuration field. */
+/*
+enum VirtioPCIDeviceStatus
+{
+	VIRTIO_PCI_DEVICE_STATUS_RESET = 0x00,
+	VIRTIO_PCI_DEVICE_STATUS_ACKNOWLEDGE = 0x01,
+	VIRTIO_PCI_DEVICE_STATUS_DRIVER = 0x02,
+	VIRTIO_PCI_DEVICE_STATUS_DRIVER_OK = 0x04,
+	VIRTIO_PCI_DEVICE_STATUS_FAILED = 0x80
+};
 
 /// Virtio Spec 0.9, Appendix B, "Reserved Feature Bits".
 /** We retain the names used in the spec as bitfield constants. */
+/*
 enum VirtioPCIFeatureBits
 {
 	// virtio-net features
 	VIRTIO_NET_F_CSUM = (1u << 0u),       // Device handles packets with partial checksum
 	VIRTIO_NET_F_GUEST_CSUM = (1u << 1u), // Guest handles packets with partial checksum
-	VIRTIO_NET_F_CTRL_GUEST_OFFLOADS = (1u << 2u),// Control channel offloads reconfiguration support
 	VIRTIO_NET_F_MAC = (1u << 5u),        // Device has given MAC address.
 	VIRTIO_NET_F_GSO = (1u << 6u),        // (Deprecated) device handles packets with any GSO type.
 	
@@ -240,7 +876,7 @@ enum VirtioPCIFeatureBits
 	VIRTIO_F_FEATURES_HIGH = (1u << 31u),
 	
 	VIRTIO_ALL_KNOWN_FEATURES =
-		VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM | VIRTIO_NET_F_CTRL_GUEST_OFFLOADS | VIRTIO_NET_F_MAC
+		VIRTIO_NET_F_CSUM | VIRTIO_NET_F_GUEST_CSUM | VIRTIO_NET_F_MAC
 		| VIRTIO_NET_F_GSO | VIRTIO_NET_F_GUEST_TSO4 | VIRTIO_NET_F_GUEST_TSO6
 		| VIRTIO_NET_F_GUEST_ECN | VIRTIO_NET_F_GUEST_UFO | VIRTIO_NET_F_HOST_TSO4
 		| VIRTIO_NET_F_HOST_TSO6 | VIRTIO_NET_F_HOST_ECN | VIRTIO_NET_F_HOST_UFO
@@ -259,7 +895,7 @@ struct virtio_net_config
 	uint16_t status;
 };
 
-// Packet header flags
+
 #define VIRTIO_NET_HDR_F_NEEDS_CSUM 1
 #define VIRTIO_NET_HDR_GSO_NONE 0 
 #define VIRTIO_NET_HDR_GSO_TCPV4 1
@@ -276,7 +912,7 @@ struct virtio_net_hdr
 	uint16_t csum_start;
 	uint16_t csum_offset;
 	/* Only if	VIRTIO_NET_F_MRG_RXBUF: */
-	uint16_t num_buffers[];
+/*	uint16_t num_buffers[];
 };
 
 struct virtio_net_packet
@@ -297,6 +933,8 @@ struct virtio_net_packet
 	/// Memory descriptor combining the tx/rx header buffer and mbuf
 	SSDCMultiSubrangeMemoryDescriptor* dma_md;
 	
+	IODMACommand* dma_cmd;
+	
 	SSDCMemoryDescriptorSubrange dma_md_subranges[2];
 };
 
@@ -309,6 +947,18 @@ static void log_feature(uint32_t feature_bitmap, uint32_t feature, const char* f
 	}
 }
 
+
+/// Virtqueue size calculation, see section 2.3 in virtio spec
+static const size_t VIRTIO_PAGE_SIZE = 4096;
+static inline size_t virtio_page_align(size_t size)
+{
+	return (size + VIRTIO_PAGE_SIZE - 1u) & ~(VIRTIO_PAGE_SIZE - 1u);
+}
+static inline size_t vring_size(size_t qsz)
+{
+	return virtio_page_align(sizeof(vring_desc) * qsz + sizeof(uint16_t) * (2 + qsz))
+		+ virtio_page_align(sizeof(vring_used_elem) * qsz);
+}
 
 #define LOG_FEATURE(FEATURES, FEATURE) \
 log_feature(FEATURES, FEATURE, #FEATURE)
@@ -355,6 +1005,111 @@ static void virtio_log_supported_features(uint32_t dev_features)
 	}
 }
 
+// Helper functions for reading/writing the virtio header registers
+
+
+void PJVirtioNet::virtioHeaderWrite8(uint16_t offset, uint8_t val)
+{
+	pci_dev->ioWrite8(offset, val, pci_virtio_header_iomap);
+}
+void PJVirtioNet::virtioHeaderWrite16(uint16_t offset, uint16_t val)
+{
+	pci_dev->ioWrite16(offset, val, pci_virtio_header_iomap);
+}
+void PJVirtioNet::virtioHeaderWrite32(uint16_t offset, uint32_t val)
+{
+	pci_dev->ioWrite32(offset, val, pci_virtio_header_iomap);
+}
+uint8_t PJVirtioNet::virtioHeaderRead8(uint16_t offset)
+{
+	return pci_dev->ioRead8(offset, pci_virtio_header_iomap);
+}
+uint16_t PJVirtioNet::virtioHeaderRead16(uint16_t offset)
+{
+	return pci_dev->ioRead16(offset, pci_virtio_header_iomap);
+}
+uint32_t PJVirtioNet::virtioHeaderRead32(uint16_t offset)
+{
+	return pci_dev->ioRead32(offset, pci_virtio_header_iomap);
+}
+
+void PJVirtioNet::virtioHeaderWriteLE32(uint16_t offset, uint32_t val)
+{
+	virtioHeaderWrite32(offset, OSSwapHostToLittleInt32(val));
+}
+uint32_t PJVirtioNet::virtioHeaderReadLE32(uint16_t offset)
+{
+	return OSSwapLittleToHostInt32(virtioHeaderRead32(offset));
+}
+void PJVirtioNet::virtioHeaderWriteLE16(uint16_t offset, uint16_t val)
+{
+	virtioHeaderWrite16(offset, OSSwapHostToLittleInt16(val));
+}
+uint16_t PJVirtioNet::virtioHeaderReadLE16(uint16_t offset)
+{
+	return OSSwapLittleToHostInt16(virtioHeaderRead16(offset));
+}
+
+
+void PJVirtioNet::setVirtioDeviceStatus(uint8_t status)
+{
+	virtioHeaderWrite8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS, status);
+}
+void PJVirtioNet::updateVirtioDeviceStatus(uint8_t status)
+{
+	uint8_t old_status = virtioHeaderRead8(VIRTIO_PCI_CONF_OFFSET_DEVICE_STATUS);
+	setVirtioDeviceStatus(status | old_status);
+}
+
+void PJVirtioNet::failDevice()
+{
+	if (pci_dev)
+	{
+		if (this->intr_event_source)
+			endHandlingInterrupts();
+		if (this->pci_virtio_header_iomap)
+		{
+			updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_FAILED);
+			OSSafeReleaseNULL(this->pci_virtio_header_iomap);
+		}
+		pci_dev->close(this);
+	}
+}
+
+bool PJVirtioNet::interruptFilter(OSObject* me, IOFilterInterruptEventSource* source)
+{
+	// deliberately minimalistic function, as it will be called from an interrupt
+	PJVirtioNet* virtio_net = OSDynamicCast(PJVirtioNet, me);
+	if (!virtio_net || source != virtio_net->intr_event_source)
+		return false; // this isn't really for us
+	
+	// check if anything interesting has happened, record status register
+	uint8_t isr = virtio_net->virtioHeaderRead8(VIRTIO_PCI_CONF_OFFSET_ISR_STATUS);
+	virtio_net->last_isr = isr;
+	if (isr & VIRTIO_PCI_DEVICE_ISR_USED)
+	{
+		virtio_net->last_isr = isr;
+		if (isr & VIRTIO_PCI_DEVICE_ISR_CONF_CHANGE)
+		{
+			OSTestAndSet(0, &virtio_net->received_config_change);
+		}
+		
+		// disable further interrupts until the handler has run
+		virtio_net->rx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
+		virtio_net->tx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
+		return true;
+	}
+	return false;
+}
+
+void PJVirtioNet::interruptAction(OSObject* me, IOInterruptEventSource* source, int count)
+{
+	PJVirtioNet* virtio_net = OSDynamicCast(PJVirtioNet, me);
+	if (!virtio_net || source != virtio_net->intr_event_source)
+		return;
+	
+	virtio_net->interruptAction(source, count);
+}
 
 bool PJVirtioNet::updateLinkStatus()
 {
@@ -370,50 +1125,137 @@ bool PJVirtioNet::updateLinkStatus()
 	return link_is_up;
 }
 
-void PJVirtioNet::configChangeHandler(OSObject* target, VirtioDevice* source)
+void PJVirtioNet::interruptAction(IOInterruptEventSource* source, int count)
 {
-	PJVirtioNet* me = static_cast<PJVirtioNet*>(target);
-			if (me->feature_status_field)
+	//VIOLog("Last ISR value: 0x%02X\n", last_isr);
+	uint8_t unknown_isr = last_isr & ~(VIRTIO_PCI_DEVICE_ISR_USED | VIRTIO_PCI_DEVICE_ISR_CONF_CHANGE);
+	if (unknown_isr)
+	{
+		VIOLog("virtio-net interruptAction(): Unknown bits set in ISR status register: %02X\n", unknown_isr);
+	}
+	
+	bool has_reenabled_interrupts = false;
+	
+	while (true)
+	{
+		bool config_change = !OSTestAndClear(0, &received_config_change);
+		if (config_change)
+		{
+			if (status_field_offset > 0)
 			{
-				bool up = me->updateLinkStatus();
+				bool up = updateLinkStatus();
 				VIOLog("virtio-net interruptAction: Link change detected, link is now %s.\n", up ? "up" : "down");
 			}
 			else
 			{
 				VIOLog("virtio-net interruptAction(): received a configuration change! (currently unhandled)\n");
 			}
-}
+		}
 
-void PJVirtioNet::receiveQueueCompletion(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written)
-{
-	PJVirtioNet* me = static_cast<PJVirtioNet*>(target);
-	me->handleReceivedPacket(static_cast<virtio_net_packet*>(ref));
+		// Handle received packets
+		if (rx_queue.last_used_idx != rx_queue.used->idx)
+		{
+			handleReceivedPackets();
 			/*
 			IOLog("virtio-net interruptAction(): Populated receive buffers: %u free descriptors left, avail idx %u\n",
 				rx_queue.num_free_desc, rx_queue.avail->idx);
-			*/
-	
+			*//*
+		}
 		
 		// Ensure there are plenty of receive buffers
-	me->populateReceiveBuffers();
-}
+		populateReceiveBuffers();
 		
-void PJVirtioNet::transmitQueueCompletion(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written)
-{
-	PJVirtioNet* me = static_cast<PJVirtioNet*>(target);
+		// Dispose of any completed sent packets
+		if (tx_queue.last_used_idx != tx_queue.used->idx)
+		{
 			/*kprintf("TX queue last used idx: %u, tx_queue used: %p, desc: %p, avail: %p, free: %u, head: %u\n",
 				tx_queue.last_used_idx, tx_queue.used, tx_queue.desc, tx_queue.avail, tx_queue.num_free_desc, tx_queue.free_desc_head);
 			*/
 			//IOLog("TX queue last used idx (%u) differs from current (%u), freeing packets.\n", tx_queue.last_used_idx, tx_queue.used->idx);
-			
-			me->releaseSentPacket(static_cast<virtio_net_packet*>(ref));
-	
+			/*
+			releaseSentPackets();
+		}
+		
+		if (has_reenabled_interrupts)
+			break;
+		
+		// re-enable interrupts, then re-check for used buffers to avoid a race condition
+		rx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
+		// only enable transmission interrupts if we won't be notified for an empty queue anyway
+		if (!feature_notify_on_empty)
+			tx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
+		OSSynchronizeIO();
+		
+		has_reenabled_interrupts = true;
+	}
 }
 
+static void virtio_net_log_bad_provider(IOService* provider)
+{
+	if (!provider)
+	{
+		VIOLog("virtio-net start(): Error! Got NULL provider!?\n");
+		return;
+	}
+	const OSMetaClass* meta = provider->getMetaClass();
+	VIOLog("virtio-net start(): Provider (%p) has wrong type: %s (expected IOPCIDevice)\n", provider, meta->getClassName());
+}
+
+bool PJVirtioNet::mapVirtioConfigurationSpace()
+{
+	assert(pci_dev);
+	PJLogVerbose("virtio-net mapConfigurationSpace(): attempting to map device memory with register 0\n");
+	IOMemoryMap* iomap = pci_dev->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
+	if (!iomap)
+	{
+		VIOLog("virtio-net mapConfigurationSpace(): Error! Memory-Mapping configuration space failed.\n");
+		return false;
+	}
+	PJLogVerbose("virtio-net mapConfigurationSpace(): Mapped %llu bytes of device memory at %llX. (physical address %llX)\n",
+		static_cast<uint64_t>(iomap->getLength()), iomap->getAddress(), pci_dev->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0)->getPhysicalSegment(0, NULL, 0));
+	this->pci_virtio_header_iomap = iomap;
+	return true;
+}
+
+void PJVirtioNet::virtioResetDevice()
+{
+	assert(pci_dev);
+	assert(this->pci_virtio_header_iomap);
+	setVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_RESET);
+}
+
+uint32_t PJVirtioNet::virtioResetInitAndReadFeatureBits()
+{
+	assert(pci_dev);
+	assert(this->pci_virtio_header_iomap);
+	// Reset the device just in case it was previously opened and left in a weird state.
+	virtioResetDevice();
+	// Acknowledge the device, then tell it we're the driver
+	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_ACKNOWLEDGE);
+	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_DRIVER);
+	
+	dev_feature_bitmap = virtioHeaderReadLE32(VIRTIO_PCI_CONF_OFFSET_DEVICE_FEATURE_BITS_0_31);
+	return dev_feature_bitmap;
+}
+
+uint16_t PJVirtioNet::virtioReadOptionalConfigFieldsGetDeviceSpecificOffset()
+{
+	assert(pci_dev);
+	assert(this->dev_feature_bitmap > 0); // if the features have been read, at the very least the BAD_FEATURE bit will be set
+	assert(this->pci_virtio_header_iomap);/*
+	
+	/* Read out the flexible config space *//*
+	size_t config_offset = VIRTIO_PCI_CONF_OFFSET_END_HEADER;
+
+	// TODO: find out how to detect if MSI-X is enabled (I don't think it ever is on Mac OS X)
+	// if (msix_enabled) config_offset += 4;
+	
+	// wherever we are now is the offset for the device-specific configuration space
+	return config_offset;
+}
 
 UInt32 PJVirtioNet::getFeatures() const
 {
-#warning TODO: probably can report some extra features here
 	if (driver_state == kDriverStateInitial)
 		VIOLog("virtio-net getFeatures(): Warning! System asked about driver features before they could be detected.\n");
 	return (feature_tso_v4 ? kIONetworkFeatureTSOIPv4 : 0);
@@ -449,25 +1291,30 @@ bool PJVirtioNet::start(IOService* provider)
 		PJLogVerbose("Reported MTU: %lu bytes\n", static_cast<size_t>(mtu));
 	}
 
-	VirtioDevice* virtio = OSDynamicCast(VirtioDevice, provider);
-	if (!virtio)
+	IOPCIDevice* pci = OSDynamicCast(IOPCIDevice, provider);
+	if (!pci)
 	{
 		driver_state = kDriverStateStartFailedUnsupportedDevice;
-		IOLog("virtio-net start(): Expect VirtioDevice provider\n");
+		virtio_net_log_bad_provider(provider);
 		return false;
 	}
 
-	if (!virtio->open(this))
+	if (!pci->open(this))
 		return false;
-	this->virtio_dev = virtio;
+	this->pci_dev = pci;	
 
 	work_loop = getWorkLoop();
 	if (!work_loop)
 		return false;
 	work_loop->retain();
 	
+	this->should_disable_io = !pci->setIOEnable(true);
+	
 	if (!this->startWithIOEnabled())
 	{
+		if (this->should_disable_io)
+			pci->setIOEnable(false);
+		this->should_disable_io = false;
 		return false;
 	}
 	
@@ -476,12 +1323,13 @@ bool PJVirtioNet::start(IOService* provider)
 
 bool PJVirtioNet::startWithIOEnabled()
 {
+	if (!mapVirtioConfigurationSpace())
+		return false;
+	
 	PJLogVerbose("virtio-net start(): Device Initialisation Sequence\n");
 	
 	// partially start up the device
-	this->virtio_dev->resetDevice();
-
-	uint32_t dev_features = this->virtio_dev->supportedFeatures();
+	uint32_t dev_features = virtioResetInitAndReadFeatureBits();
 #ifdef PJ_VIRTIO_NET_VERBOSE
 	virtio_log_supported_features(dev_features);
 #endif
@@ -493,7 +1341,7 @@ bool PJVirtioNet::startWithIOEnabled()
 	 * is necessary to enable TSO - we won't actually use the checksum offload
 	 * mechanism itself as OSX won't provide us with a partial checksum for the
 	 * pseudo header.
-	 */
+	 *//*
 	feature_checksum_offload = false;
 	feature_tso_v4 = false;
 	if (pref_allow_offloading)
@@ -504,13 +1352,16 @@ bool PJVirtioNet::startWithIOEnabled()
 			feature_tso_v4 = (0 != (dev_features & VIRTIO_NET_F_HOST_TSO4));
 		}
 	}
+
+	size_t device_specific_offset = virtioReadOptionalConfigFieldsGetDeviceSpecificOffset();
 	
-	determineMACAddress();
-	detectLinkStatusFeature();
+	determineMACAddress(device_specific_offset);
+	detectLinkStatusFeature(device_specific_offset);
 	
 	// we're not actually interested in the device for now until it's enable()d
-	this->virtio_dev->failDevice();
-	this->virtio_dev->close(this);
+	virtioResetDevice();
+	OSSafeReleaseNULL(pci_virtio_header_iomap);
+	pci_dev->close(this);
 	
 	if (!getOutputQueue())
 	{
@@ -558,14 +1409,14 @@ bool PJVirtioNet::startWithIOEnabled()
 	return true;
 }
 
-void PJVirtioNet::determineMACAddress()
+void PJVirtioNet::determineMACAddress(uint16_t device_specific_offset)
 {
 	// sort out mac address
 	if (dev_feature_bitmap & VIRTIO_NET_F_MAC)
 	{
 		for (unsigned i = 0; i < sizeof(mac_address); ++i)
 		{
-			mac_address.bytes[i] = virtio_dev->readDeviceSpecificConfig8(static_cast<unsigned>(offsetof(virtio_net_config, mac[i])));
+			mac_address.bytes[i] = virtioHeaderRead8(device_specific_offset + offsetof(virtio_net_config, mac[i]));
 		}
 		PJLogVerbose("virtio-net start(): Determined MAC address: %02X:%02X:%02X:%02X:%02X:%02X\n",
 			mac_address.bytes[0], mac_address.bytes[1], mac_address.bytes[2],
@@ -591,23 +1442,93 @@ void PJVirtioNet::determineMACAddress()
 }
 
 // check link status, if possible, and record its configuration space offset for later updates
-void PJVirtioNet::detectLinkStatusFeature()
+void PJVirtioNet::detectLinkStatusFeature(uint16_t device_specific_offset)
 {
+	status_field_offset = 0;
 	bool link_is_up = true;
 	if (dev_feature_bitmap & VIRTIO_NET_F_STATUS)
 	{
-		this->feature_status_field = true;
+		status_field_offset = device_specific_offset + offsetof(virtio_net_config, status);
 		uint16_t status = readStatus();
 		PJLogVerbose("virtio-net start(): Link status field 0x%04X (link %s)\n",
 			status, (status & VIRTIO_NET_S_LINK_UP) ? "up" : "down");
 		link_is_up = (status & VIRTIO_NET_S_LINK_UP) != 0;
 	}
-	else
-	{
-		this->feature_status_field = false;
-	}
 	setLinkStatus((link_is_up ? kIONetworkLinkActive : 0) | kIONetworkLinkValid);
 }
+
+bool PJVirtioNet::beginHandlingInterrupts()
+{
+	PJLogVerbose("virtio-net beginHandlingInterrupts()\n");
+	if (!pci_dev)
+	{
+		VIOLog("virtio-net beginHandlingInterrupts(): Error! PCI device must be known for generating interrupts.\n");
+		return false;
+	}
+	
+	// Message signaled interrupts (MSI) are more efficient than the normal broadcast ones, so let's try to use them
+	int msi_index = -1;
+	int intr_index = 0;
+	
+	// keep trying interrupt source indices until we run out or find an MSI one
+	while (intr_index >= 0)
+	{
+		int intr_type = 0;
+		IOReturn ret = pci_dev->getInterruptType(intr_index, &intr_type);
+		if (ret != kIOReturnSuccess)
+			break;
+			
+		if (intr_type & kIOInterruptTypePCIMessaged)
+		{
+			// found MSI interrupt source
+			msi_index = intr_index;
+			break;
+		}
+		++intr_index;
+	}
+	
+	if (msi_index >= 0)
+	{
+		intr_index = msi_index;
+		VIOLog("virtio-net beginHandlingInterrupts(): Enabled message signaled interrupts (index %d).\n", intr_index);
+	}
+	else
+	{
+		intr_index = 0;
+	}
+
+	
+	intr_event_source = IOFilterInterruptEventSource::filterInterruptEventSource(this, &interruptAction, &interruptFilter, pci_dev, intr_index);
+	if (!intr_event_source)
+	{
+		VIOLog("virtio-net beginHandlingInterrupts(): Error! %s interrupt event source failed.\n", intr_event_source ? "Initialising" : "Allocating");
+		OSSafeReleaseNULL(intr_event_source);
+		return false;
+	}
+	if (kIOReturnSuccess != work_loop->addEventSource(intr_event_source))
+	{
+		VIOLog("virtio-net beginHandlingInterrupts(): Error! Adding interrupt event source to work loop failed.\n");
+		OSSafeReleaseNULL(intr_event_source);
+		return false;
+	}
+	intr_event_source->enable();
+	PJLogVerbose("virtio-net beginHandlingInterrupts(): now handling interrupts, good to go.\n");	
+	return true;
+}
+
+void PJVirtioNet::endHandlingInterrupts()
+{
+	if (!intr_event_source)
+	{
+		VIOLog("virtio-net endHandlingInterrupts(): Warning! Interrupt event source does not exist.\n");
+		return;
+	}
+	
+	this->intr_event_source->disable();
+	work_loop->removeEventSource(intr_event_source);
+	OSSafeReleaseNULL(intr_event_source);
+}
+
 
 
 bool PJVirtioNet::configureInterface(IONetworkInterface *netif)
@@ -631,17 +1552,90 @@ IOReturn PJVirtioNet::getPacketFilters(const OSSymbol *group, UInt32 *filters) c
 
 int32_t PJVirtioNet::readStatus()
 {
-	if (!feature_status_field) return -1;
-	return this->virtio_dev->readDeviceSpecificConfig16Native(offsetof(virtio_net_config, status));
+	if (!status_field_offset) return -1;
+	return virtioHeaderRead16(status_field_offset);
 }
 
+bool PJVirtioNet::setupVirtqueue(
+	uint16_t queue_id, virtio_net_virtqueue& queue)
+{
+	/* virtqueues must be aligned to 4096 bytes (last 12 bits 0) and the shifted
+	 * address will be written to a 32-bit register 
+	 *//*
+	const mach_vm_address_t VIRTIO_RING_ALLOC_MASK = 0xffffffffull << 12u;
+	// detect and allocate virtqueues - expect 2 plus 1 if VIRTIO_NET_F_CTRL_VQ is set
+	// queue 0 is receive queue (Appendix C, Configuration)
+	// queue 1 is transmit queue
+	// queue 2 is control queue (if present)
+	virtioHeaderWriteLE16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SELECT, queue_id);
+	uint16_t queue_size = virtioHeaderReadLE16(VIRTIO_PCI_CONF_OFFSET_QUEUE_SIZE);
+	if (queue_size == 0)
+	{
+		VIOLog("virtio-net setupVirtqueue(): Queue size for queue %u is 0.\n", queue_id);
+		return false;
+	}
+	else if (!is_pow2(queue_size))
+	{
+		VIOLog("virtio-net setupVirtqueue(): Queue size for queue %u is %u, which is not a power of 2. Aborting.\n", queue_id, queue_size);
+		return false;
+	}
+	PJLogVerbose("virtio-net setupVirtqueue(): Reported queue size for queue %u: %u\n", queue_id, queue_size);
+	// allocate an appropriately sized DMA buffer. As per the spec, this must be physically contiguous.
+	size_t queue_size_bytes = vring_size(queue_size);
+	IOBufferMemoryDescriptor* queue_buffer = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+		kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut, queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
+	if (!queue_buffer)
+	{
+		VIOLog("virtio-net setupVirtqueue(): Failed to allocate queue buffer with %" PRIuPTR " contiguous bytes and mask %" PRIX64 ".\n",
+			queue_size_bytes, VIRTIO_RING_ALLOC_MASK);
+		return false;
+	}
+	memset(queue_buffer->getBytesNoCopy(), 0, queue_size_bytes);
+				
+	virtqueue_init(queue, queue_buffer, queue_size, queue_id);
+
+	virtioHeaderWriteLE32(VIRTIO_PCI_CONF_OFFSET_QUEUE_ADDRESS, static_cast<uint32_t>(queue_buffer->getPhysicalSegment(0, NULL, 0) >> 12u));
+	
+	return true;
+}
+void virtqueue_init(virtio_net_virtqueue& queue, IOBufferMemoryDescriptor* buf, uint16_t queue_size, uint16_t queue_id)
+{
+	queue.index = queue_id;
+	queue.buf = buf;
+	vring_init(&queue, queue_size, buf->getBytesNoCopy(), VIRTIO_PAGE_SIZE);
+
+	// disable interrupts to begin with
+	queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
+
+	queue.packets_for_descs = PJZMallocArray<virtio_net_packet*>(queue_size);
+	queue.num_free_desc = queue_size;
+	queue.free_desc_head = 0;
+	queue.last_used_idx = 0;
+	// 
+	for (uint16_t i = 1; i < queue_size; ++i)
+	{
+		queue.desc[i - 1].flags = VRING_DESC_F_NEXT;
+		queue.desc[i - 1].next = i;
+	}
+}
+
+void virtqueue_free(virtio_net_virtqueue& queue)
+{
+	OSSafeReleaseNULL(queue.buf);
+	if (queue.packets_for_descs)
+	{
+		PJFreeArray(queue.packets_for_descs, queue.num);
+		queue.packets_for_descs = NULL;
+	}
+	memset(&queue, 0, sizeof(queue));
+}
 
 
 IOOutputQueue* PJVirtioNet::createOutputQueue()
 {
 	/* For now, go with a gated output queue, as this is the simplest option. Later
-	 * on, we can provide more granular access to the virtqueue mechanism. */
-	IOGatedOutputQueue* queue = IOGatedOutputQueue::withTarget(this, this->getWorkLoop(), 0 /* capacity = 0: Initially, we can't yet send packets */);
+	 * on, we can provide more granular access to the virtqueue mechanism. *//*
+	IOGatedOutputQueue* queue = IOGatedOutputQueue::withTarget(this, this->getWorkLoop(), 0 /* capacity = 0: Initially, we can't yet send packets *//*);
 	PJLogVerbose("virtio-net createOutputQueue(): %p\n", queue);
 	return queue;
 }
@@ -685,43 +1679,38 @@ IOReturn PJVirtioNet::gatedEnableDebugger(IOKernelDebugger* debugger)
 
 bool PJVirtioNet::enablePartial()
 {
-	if (!this->virtio_dev->open(this))
+	if (!pci_dev->open(this))
 	{
-		VIOLog("virtio-net enable(): Opening Virtio device failed.\n");
+		VIOLog("virtio-net enable(): Opening PCI device failed.\n");
 		return false;
 	}
+	if (!mapVirtioConfigurationSpace())
+		return false;
 
 	// Re-initialise the device
-	uint32_t dev_features = this->virtio_dev->resetDevice();
-
-	// write back supported features
-	uint32_t supported_features = dev_features &
-		(VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | (feature_checksum_offload ? (VIRTIO_NET_F_CSUM | VIRTIO_NET_F_HOST_TSO4) : 0));
-	if (!this->virtio_dev->requestFeatures(supported_features))
-	{
-		this->virtio_dev->failDevice();
-		this->virtio_dev->close(this);
-		return false;
-	}
-	PJLogVerbose("virtio-net enable(): Wrote driver-supported feature bits: 0x%08X\n", supported_features);
+	uint32_t dev_features = virtioResetInitAndReadFeatureBits();
 
 	// Initialise the receive and transmit virtqueues
-	
-	IOReturn result = this->virtio_dev->setupVirtqueues(2);
-	if (result != kIOReturnSuccess)
-	{
-		IOLog("PJVirtioNet::enablePartial(): setting up virtqueues failed with error %x\n", result);
-		this->virtio_dev->failDevice();
-		this->virtio_dev->close(this);
-		return false;
-	}
-	
+	if (!setupVirtqueue(0, rx_queue))
+		return failDevice(), false;
+	PJLogVerbose("virtio-net enable(): Initialised virtqueue 0 (receive queue) with %llu bytes (%u entries) at %llX\n",
+		static_cast<uint64_t>(rx_queue.buf->getLength()), rx_queue.num, rx_queue.buf->getPhysicalSegment(0, NULL, 0));
+
+	if (!setupVirtqueue(1, tx_queue))
+		return failDevice(), kIOReturnError;
+	PJLogVerbose("virtio-net enable(): Initialised virtqueue 1 (transmit queue) with %llu bytes (%u entries) at %llX\n",
+		static_cast<uint64_t>(tx_queue.buf->getLength()), tx_queue.num, tx_queue.buf->getPhysicalSegment(0, NULL, 0));
 	// Don't support VIRTIO_NET_F_CTRL_VQ for now
 	
 			
+	// write back supported features
+	uint32_t supported_features = dev_features &
+		(VIRTIO_F_NOTIFY_ON_EMPTY | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | (feature_checksum_offload ? (VIRTIO_NET_F_CSUM | VIRTIO_NET_F_HOST_TSO4) : 0));
+	virtioHeaderWriteLE32(VIRTIO_PCI_CONF_OFFSET_GUEST_FEATURE_BITS_0_31, supported_features);
+	PJLogVerbose("virtio-net enable(): Wrote driver-supported feature bits: 0x%08X\n", supported_features);
 	
 	// tell device we're ready
-	this->virtio_dev->startDevice(&configChangeHandler, this);
+	updateVirtioDeviceStatus(VIRTIO_PCI_DEVICE_STATUS_DRIVER_OK);
 	PJLogVerbose("virtio-net enable(): Device set to 'driver ok' state.\n");
 
 	// The virtqueues can now be used
@@ -729,10 +1718,18 @@ bool PJVirtioNet::enablePartial()
 	// fill receive queue with as many empty packets as possible
 	if (!populateReceiveBuffers())
 	{
-		this->virtio_dev->failDevice();
-		this->virtio_dev->close(this);
-		return false;
+		// even if we couldn't fill all of it because we ran out of memory, treat partial success as OK.
+		if (rx_queue.num_free_desc >= rx_queue.num)
+		{
+			// really memory-starved, sorry!
+			driver_state = kDriverStateEnableFailedOutOfMemory;
+			VIOLog("virtio-net enable(): Failed to populate receive buffers: out of memory.\n");
+			failDevice(); // stop producing interrupts
+			return kIOReturnNoMemory;
+		}
 	}
+	PJLogVerbose("virtio-net enable(): Populated receive buffers: %u free descriptors left, avail idx %u\n",
+		rx_queue.num_free_desc, rx_queue.avail->idx);
 
 	return true;
 }
@@ -996,7 +1993,7 @@ UInt32 PJVirtioNet::outputPacket(mbuf_t buffer, void *param)
 	}
 			
 	uint16_t avail_idx = tx_queue.avail->idx;
-	IOReturn add_ret = addPacketToQueue(buffer, tx_queue, false /* packet to be read by device */, avail_idx);
+	IOReturn add_ret = addPacketToQueue(buffer, tx_queue, false /* packet to be read by device *//*, avail_idx);
 	if (add_ret != kIOReturnSuccess)
 	{
 		if (add_ret == kIOReturnOutputStall)
@@ -1131,7 +2128,7 @@ void PJVirtioNet::sendPacket(void *pkt, UInt32 pktSize)
 	uint16_t avail_idx = tx_queue.avail->idx;
 	tx_queue.avail->ring[avail_idx % tx_queue.num] = head_desc;
 	/*kprintf("virtio-net sendPacket(): Adding packet to tx queue in descriptors %u and %u, available index %u.\n",
-		head_desc, main_desc, avail_idx);*/
+		head_desc, main_desc, avail_idx);*//*
 	tx_queue.avail->idx = ++avail_idx;
 	notifyQueueAvailIdx(tx_queue, avail_idx);
 	
@@ -1208,7 +2205,7 @@ struct virtio_net_cursor_segment_context
 	/// Index of the highest filled segment
 	int32_t max_segment_created;
 	/// Bits to OR into the buffer's "flags" field to indicate reading or writing
-	uint16_t buffer_direction_flag;
+	uint8_t buffer_direction_flag;
 	
 	uint32_t total_len;
 	
@@ -1248,7 +2245,7 @@ bool PJVirtioNet::outputPacketSegment(IODMACommand* target, IODMACommand::Segmen
 	/*else
 		IOLog("virtio-net outputPacketSegment(): Note: rewriting descriptor %u! Prev addr: %llu len: %u, now addr: %lu, len: %lu\n",
 			desc, ctx->queue.desc[desc].addr, ctx->queue.desc[desc].len, segment.location, segment.length);
-	*/
+	*//*
 	if (desc < 0)
 	{
 		--ctx->descs_allocd;
@@ -1283,7 +2280,7 @@ virtio_net_packet* PJVirtioNet::allocPacket()
 	{
 		packet_mem = IOBufferMemoryDescriptor::inTaskWithOptions(
 			kernel_task, kIOMemoryPhysicallyContiguous | kIODirectionInOut | kIOInhibitCache, sizeof(virtio_net_packet),
-			sizeof(void*) /* align to pointer */);
+			sizeof(void*) /* align to pointer *//*);
 		if (!packet_mem)
 			return NULL;
 		virtio_net_packet* packet = static_cast<virtio_net_packet*>(packet_mem->getBytesNoCopy());
@@ -1371,7 +2368,7 @@ static void virtio_net_enable_tcp_csum(virtio_net_packet* packet, bool need_part
 /* returns kIOReturnOutputStall if there aren't enough descriptors,
  * kIOReturnSuccess if everything went well, kIOReturnNoMemory if alloc failed,
  * and kIOReturnError if something else went wrong.
- */
+ *//*
 IOReturn PJVirtioNet::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx)
 {
 	// check if there are going to be enough descriptors around
@@ -1516,7 +2513,7 @@ IOReturn PJVirtioNet::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue&
 			packet_mbuf, ip_hdr_len, ip_hdr);
 	}
 	
-	IOReturn ret = packet->dma_cmd->setMemoryDescriptor(packet->dma_md, true /* prepare */);
+	IOReturn ret = packet->dma_cmd->setMemoryDescriptor(packet->dma_md, true /* prepare *//*);
 	if (ret != kIOReturnSuccess)
 	{
 		VIOLog("virtio-net addPacketToQueue(): Failed to set memory descriptor for DMA command: %x\n", ret);
@@ -1598,7 +2595,7 @@ IOReturn PJVirtioNet::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue&
 		++tso4_packets;
 		packet->header.gso_type = VIRTIO_NET_HDR_GSO_TCPV4;
 		int max_head_len = kIOEthernetMaxPacketSize - kIOEthernetCRCSize - tso_val;
-		if (max_head_len >= 14 + 20 + 20) /* ethernet + IP + TCP */
+		if (max_head_len >= 14 + 20 + 20) /* ethernet + IP + TCP *//*
 		{
 			if (head_len != max_head_len)
 			{
@@ -1619,7 +2616,7 @@ IOReturn PJVirtioNet::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue&
 						// TODO: Defend against infinite loop (out of range descriptors, circular lists)
 						/* note that lacking any driver bugs, this will only defend against a
 						 * buggy/malicious hypervisor, which is like fighting windmills.
-						 */
+						 *//*
 						VIOLog("virtio-net addPacketToQueue(): used buffer %u: length %u.\n",
 							desc, tx_queue.desc[desc].len, packet);
 						if (0 == (tx_queue.desc[desc].flags & VRING_DESC_F_NEXT))
@@ -1650,7 +2647,7 @@ IOReturn PJVirtioNet::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue&
  * we'll leave that as an optimisation for later.
  * The packet may be split over multiple buffers (max 2 for now in practice) as
  * we need physical addresses.
- */
+ *//*
 bool PJVirtioNet::populateReceiveBuffers()
 {
 	uint16_t avail_idx = rx_queue.avail->idx;
@@ -1679,7 +2676,7 @@ bool PJVirtioNet::populateReceiveBuffers()
 		}
 		
 		// this will increment avail_idx if successful
-		IOReturn add_ret = addPacketToQueue(packet_mbuf, rx_queue, true /* packet is writeable */, avail_idx);
+		IOReturn add_ret = addPacketToQueue(packet_mbuf, rx_queue, true /* packet is writeable *//*, avail_idx);
 		if (add_ret != kIOReturnSuccess)
 		{
 			static int add_fail_count = 0;
@@ -1798,7 +2795,7 @@ void PJVirtioNet::releaseSentPackets(bool from_debugger)
 				// TODO: Defend against infinite loop (out of range descriptors, circular lists)
 				/* note that lacking any driver bugs, this will only defend against a
 				 * buggy/malicious hypervisor, which is like fighting windmills.
-				 */
+				 *//*
 				VIOLog("virtio-net releaseSentPackets(): used buffer %u: length %u, associated packet: %p\n",
 					desc2, tx_queue.desc[desc2].len, packet);
 				if (desc2 >= tx_queue.num || 0 == (tx_queue.desc[desc2].flags & VRING_DESC_F_NEXT))
@@ -1909,7 +2906,7 @@ void PJVirtioNet::handleReceivedPackets()
 				// TODO: Defend against infinite loop (out of range descriptors, circular lists)
 				/* note that lacking any driver bugs, this will only defend against a
 				 * buggy/malicious hypervisor, which is like fighting windmills.
-				 */
+				 *//*
 				VIOLog("virtio-net: handleReceivedPackets(): used buffer %u: length %u, associated packet: %p\n",
 					desc, rx_queue.desc[desc].len, packet);
 				if (0 == (rx_queue.desc[desc].flags & VRING_DESC_F_NEXT))
@@ -1937,7 +2934,7 @@ void PJVirtioNet::freeDescriptorChain(virtio_net_virtqueue& queue, uint16_t desc
 		// TODO: Defend against infinite loop (out of range descriptors, circular lists)
 		/* note that lacking any driver bugs, this will only defend against a
 		 * buggy/malicious hypervisor, which is like fighting windmills.
-		 */
+		 *//*
 		uint16_t next = queue.desc[desc].next;
 		bool has_next = (0 != (queue.desc[desc].flags & VRING_DESC_F_NEXT));
 		queue.desc[desc].addr = 0;
@@ -2088,3 +3085,4 @@ IOReturn PJVirtioNet::getHardwareAddress(IOEthernetAddress* addrP)
 	*addrP = mac_address;
 	return kIOReturnSuccess;
 }
+*/

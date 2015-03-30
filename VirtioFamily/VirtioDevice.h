@@ -44,9 +44,12 @@ public:
 	
 	virtual IOReturn submitBuffersToVirtqueue(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion) = 0;
 	
+	virtual uint8_t readDeviceSpecificConfig8(unsigned device_specific_offset) = 0;
 	virtual uint32_t readDeviceSpecificConfig32LE(unsigned device_specific_offset) = 0;
+	virtual uint16_t readDeviceSpecificConfig16Native(unsigned device_specific_offset) = 0;
 	virtual void writeDeviceSpecificConfig32LE(unsigned device_specific_offset, uint32_t value_to_write) = 0;
 
+	uint32_t getVirtioDeviceType() { return virtio_device_type; }
 };
 
 class IODMACommand;

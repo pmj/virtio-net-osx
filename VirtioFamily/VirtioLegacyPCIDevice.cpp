@@ -497,10 +497,19 @@ void VirtioLegacyPCIDevice::handleClose(IOService* forClient, IOOptionBits optio
 	
 }
 
+uint8_t VirtioLegacyPCIDevice::readDeviceSpecificConfig8(unsigned device_specific_offset)
+{
+	return this->pci_device->ioRead8(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
+}
+
 uint32_t VirtioLegacyPCIDevice::readDeviceSpecificConfig32LE(unsigned device_specific_offset)
 {
 	uint32_t val = this->pci_device->ioRead32(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
 	return OSSwapLittleToHostInt32(val);
+}
+uint16_t VirtioLegacyPCIDevice::readDeviceSpecificConfig16Native(unsigned device_specific_offset)
+{
+	return this->pci_device->ioRead16(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
 }
 
 void VirtioLegacyPCIDevice::writeDeviceSpecificConfig32LE(unsigned device_specific_offset, uint32_t value_to_write)
