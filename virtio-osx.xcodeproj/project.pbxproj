@@ -17,7 +17,8 @@
 		299F18F813DC183D000200A5 /* virtio_net.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 299F18F713DC183D000200A5 /* virtio_net.cpp */; };
 		29A7E26213E2DC0B00E33939 /* virtio_ring.h in Headers */ = {isa = PBXBuildFile; fileRef = 29A7E26113E2DC0B00E33939 /* virtio_ring.h */; };
 		29CD526E13DD86D40062DAA6 /* readme.md in Resources */ = {isa = PBXBuildFile; fileRef = 29CD526D13DD86D40062DAA6 /* readme.md */; };
-		D39B59D61AC95574007D5396 /* virtio_net.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 299F18F713DC183D000200A5 /* virtio_net.cpp */; };
+		D395DCC71AC96F0C00C4EE18 /* VirtioBlockDevice.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D395DCC51AC96F0C00C4EE18 /* VirtioBlockDevice.cpp */; };
+		D395DCC81AC96F0C00C4EE18 /* VirtioBlockDevice.h in Headers */ = {isa = PBXBuildFile; fileRef = D395DCC61AC96F0C00C4EE18 /* VirtioBlockDevice.h */; };
 		D3D41D321AB84E470021F71A /* VirtioFamily.h in Headers */ = {isa = PBXBuildFile; fileRef = D3D41D311AB84E470021F71A /* VirtioFamily.h */; };
 		D3D41D341AB84E470021F71A /* VirtioFamily.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D3D41D331AB84E470021F71A /* VirtioFamily.cpp */; };
 		D3D41D3A1AB860CC0021F71A /* VirtioLegacyPCIDevice.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D3D41D381AB860CC0021F71A /* VirtioLegacyPCIDevice.cpp */; };
@@ -28,10 +29,6 @@
 		D3D41D461ABC386B0021F71A /* VirtioDevice.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D3D41D441ABC386B0021F71A /* VirtioDevice.cpp */; };
 		D3D41D471ABC386B0021F71A /* VirtioDevice.h in Headers */ = {isa = PBXBuildFile; fileRef = D3D41D451ABC386B0021F71A /* VirtioDevice.h */; };
 		D3E6DCE41AC5A231002443CE /* VirtioNetworkDevice.h in Headers */ = {isa = PBXBuildFile; fileRef = D3E6DCE21AC5A231002443CE /* VirtioNetworkDevice.h */; };
-		D3E6DCE51AC5B7B4002443CE /* PJMbufMemoryDescriptor.h in Headers */ = {isa = PBXBuildFile; fileRef = 294EC537186CCC1D0079686B /* PJMbufMemoryDescriptor.h */; };
-		D3E6DCE61AC5B7B6002443CE /* PJMbufMemoryDescriptor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 294EC536186CCC1D0079686B /* PJMbufMemoryDescriptor.cpp */; };
-		D3E6DCE71AC5B7B8002443CE /* SSDCMultiSubrangeMemoryDescriptor.h in Headers */ = {isa = PBXBuildFile; fileRef = 294EC53B186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.h */; };
-		D3E6DCE81AC5B7BB002443CE /* SSDCMultiSubrangeMemoryDescriptor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 294EC53A186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -51,6 +48,8 @@
 		299F18F713DC183D000200A5 /* virtio_net.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = virtio_net.cpp; sourceTree = "<group>"; };
 		29A7E26113E2DC0B00E33939 /* virtio_ring.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = virtio_ring.h; sourceTree = "<group>"; };
 		29CD526D13DD86D40062DAA6 /* readme.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; name = readme.md; path = ../readme.md; sourceTree = "<group>"; };
+		D395DCC51AC96F0C00C4EE18 /* VirtioBlockDevice.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = VirtioBlockDevice.cpp; sourceTree = "<group>"; };
+		D395DCC61AC96F0C00C4EE18 /* VirtioBlockDevice.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = VirtioBlockDevice.h; sourceTree = "<group>"; };
 		D3D41D2D1AB84E470021F71A /* VirtioFamily.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VirtioFamily.kext; sourceTree = BUILT_PRODUCTS_DIR; };
 		D3D41D301AB84E470021F71A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		D3D41D311AB84E470021F71A /* VirtioFamily.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VirtioFamily.h; sourceTree = "<group>"; };
@@ -162,6 +161,8 @@
 				D3D41D3C1AB86AA10021F71A /* VirtioPCIDevice.cpp */,
 				D3D41D411ABB4D4D0021F71A /* VirtioMemBalloonDevice.h */,
 				D3D41D401ABB4D4D0021F71A /* VirtioMemBalloonDevice.cpp */,
+				D395DCC61AC96F0C00C4EE18 /* VirtioBlockDevice.h */,
+				D395DCC51AC96F0C00C4EE18 /* VirtioBlockDevice.cpp */,
 				D3E6DCE21AC5A231002443CE /* VirtioNetworkDevice.h */,
 				D3E6DCE11AC5A231002443CE /* VirtioNetworkDevice.cpp */,
 				D3D41D2F1AB84E470021F71A /* Supporting Files */,
@@ -195,10 +196,9 @@
 			isa = PBXHeadersBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D3E6DCE71AC5B7B8002443CE /* SSDCMultiSubrangeMemoryDescriptor.h in Headers */,
-				D3E6DCE51AC5B7B4002443CE /* PJMbufMemoryDescriptor.h in Headers */,
 				D3E6DCE41AC5A231002443CE /* VirtioNetworkDevice.h in Headers */,
 				D3D41D321AB84E470021F71A /* VirtioFamily.h in Headers */,
+				D395DCC81AC96F0C00C4EE18 /* VirtioBlockDevice.h in Headers */,
 				D3D41D431ABB4D4D0021F71A /* VirtioMemBalloonDevice.h in Headers */,
 				D3D41D3B1AB860CC0021F71A /* VirtioLegacyPCIDevice.h in Headers */,
 				D3D41D471ABC386B0021F71A /* VirtioDevice.h in Headers */,
@@ -322,9 +322,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D3E6DCE81AC5B7BB002443CE /* SSDCMultiSubrangeMemoryDescriptor.cpp in Sources */,
-				D39B59D61AC95574007D5396 /* virtio_net.cpp in Sources */,
-				D3E6DCE61AC5B7B6002443CE /* PJMbufMemoryDescriptor.cpp in Sources */,
+				D395DCC71AC96F0C00C4EE18 /* VirtioBlockDevice.cpp in Sources */,
 				D3D41D3A1AB860CC0021F71A /* VirtioLegacyPCIDevice.cpp in Sources */,
 				D3D41D461ABC386B0021F71A /* VirtioDevice.cpp in Sources */,
 				D3D41D421ABB4D4D0021F71A /* VirtioMemBalloonDevice.cpp in Sources */,

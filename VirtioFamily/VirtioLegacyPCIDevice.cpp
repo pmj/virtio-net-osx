@@ -539,6 +539,18 @@ uint32_t VirtioLegacyPCIDevice::readDeviceSpecificConfig32LE(unsigned device_spe
 	uint32_t val = this->pci_device->ioRead32(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
 	return OSSwapLittleToHostInt32(val);
 }
+
+uint64_t VirtioLegacyPCIDevice::readDeviceSpecificConfig64LE(unsigned device_specific_offset)
+{
+	uint32_t low = this->pci_device->ioRead32(
+		this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
+	uint32_t high = this->pci_device->ioRead32(
+		this->deviceSpecificConfigStartHeaderOffset + device_specific_offset + 4, this->pci_virtio_header_iomap);
+	low = OSSwapLittleToHostInt32(low);
+	high = OSSwapLittleToHostInt32(high);
+	return (static_cast<uint64_t>(high) << 32u) | low;
+}
+
 uint16_t VirtioLegacyPCIDevice::readDeviceSpecificConfig16Native(unsigned device_specific_offset)
 {
 	return this->pci_device->ioRead16(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
