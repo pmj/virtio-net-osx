@@ -23,6 +23,7 @@ protected:
 	IOMemoryMap* pci_virtio_header_iomap;
 	IOPCIDevice* pci_device;
 	uint32_t features;
+	uint32_t active_features;
 	
 	struct VirtioLegacyPCIVirtqueue* virtqueues;
 	unsigned num_virtqueues;
@@ -35,7 +36,7 @@ protected:
 	volatile UInt8 received_config_change __attribute__((aligned(32)));
 
 public:
-    virtual IOService* probe(IOService* provider, SInt32* score) override;
+	virtual IOService* probe(IOService* provider, SInt32* score) override;
 	virtual bool start(IOService* provider) override;
 
 	virtual bool handleOpen(IOService* forClient, IOOptionBits options, void* arg) override;
@@ -45,14 +46,16 @@ public:
 	virtual uint32_t supportedFeatures() override;
 	virtual bool requestFeatures(uint32_t use_features) override;
 	virtual void failDevice() override;
-	virtual IOReturn setupVirtqueues(unsigned number_queues) override;
+	virtual IOReturn setupVirtqueues(unsigned number_queues, const bool queue_interrupts_enabled[] = nullptr, unsigned out_queue_sizes[] = nullptr) override;
+	virtual IOReturn setVirtqueueInterruptsEnabled(unsigned queue_id, bool enabled) override;
 	virtual void startDevice(ConfigChangeAction action = nullptr, OSObject* target = nullptr) override;
 	
 	virtual void closePCIDevice();
 
 	virtual IOReturn submitBuffersToVirtqueue(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion) override;
-	virtual void processCompletedRequestsInVirtqueue(VirtioVirtqueue* virtqueue);
-
+	unsigned processCompletedRequestsInVirtqueue(VirtioVirtqueue* virtqueue, unsigned completion_limit);
+	virtual unsigned pollCompletedRequestsInVirtqueue(unsigned queue_index, unsigned completion_limit = 0) override;
+	
 	virtual uint8_t readDeviceSpecificConfig8(unsigned device_specific_offset) override;
 	virtual uint32_t readDeviceSpecificConfig32LE(unsigned device_specific_offset) override;
 	virtual uint16_t readDeviceSpecificConfig16Native(unsigned device_specific_offset) override;
@@ -76,7 +79,7 @@ public:
 
 
 private:
-	IOReturn setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, unsigned queue_id);
+	IOReturn setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, unsigned queue_id, bool interrupts_enabled);
 	bool mapHeaderIORegion();
 	
 	static bool outputVringDescSegment(

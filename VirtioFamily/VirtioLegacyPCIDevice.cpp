@@ -224,12 +224,20 @@ bool VirtioLegacyPCIDevice::requestFeatures(uint32_t use_features)
 		//a feature is present in the use features that is not supported
 		return false;
 	}
+	if ((use_features & VirtioDeviceGenericFeature::VIRTIO_F_RING_EVENT_IDX) != 0)
+	{
+		IOLog("VirtioLegacyPCIDevice::requestFeatures(): feature VIRTIO_F_RING_EVENT_IDX (bit 29) is not currently supported.\n");
+		return false;
+	}
+	
 	//check bit 30 isnt set
 	if (CHECK_BIT(use_features, 30))
 	{
 		//bit 30 is set which we do not want
+		IOLog("VirtioLegacyPCIDevice::requestFeatures(): Do not request feature bit 30 - it is obsolete.\n");
 		return false;
 	}
+	this->active_features = use_features;
 	
 	//otherwise all use features are in our supported features
 	this->pci_device->ioWrite32(VirtioLegacyHeaderOffset::GUEST_FEATURE_BITS_0_31, use_features, this->pci_virtio_header_iomap);
@@ -256,7 +264,7 @@ static inline unsigned vring_mem_size(unsigned qsz)
 		+ virtio_page_align(sizeof(VirtioVringUsedElement) * qsz);
 }
 
-IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, unsigned queue_id)
+IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, unsigned queue_id, bool interrupts_enabled)
 {
 	// write queue selector
 	this->pci_device->ioWrite16(VirtioLegacyHeaderOffset::QUEUE_SELECT, queue_id, this->pci_virtio_header_iomap);
@@ -372,6 +380,9 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, 
 	}
 	
 	queue->queue.used_ring_last_head_index = queue->queue.used_ring->head_index;
+
+	queue->queue.interrupts_requested = interrupts_enabled;
+	queue->queue.available_ring->flags = interrupts_enabled ? 0 : VirtioVringAvailFlag::NO_INTERRUPT;
 	
 	// initialise list of unused descriptors:
 	queue->queue.first_unused_descriptor_index = 0;
@@ -399,6 +410,22 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, 
 	return kIOReturnSuccess;
 }
 
+IOReturn VirtioLegacyPCIDevice::setVirtqueueInterruptsEnabled(unsigned queue_id, bool enabled)
+{
+	if (queue_id > this->num_virtqueues)
+	{
+		return kIOReturnBadArgument;
+	}
+	
+	if (this->virtqueues[queue_id].queue.interrupts_requested != enabled)
+	{
+		this->virtqueues[queue_id].queue.interrupts_requested = enabled;
+		this->virtqueues[queue_id].queue.available_ring->flags = enabled ? 0 : VirtioVringAvailFlag::NO_INTERRUPT;
+	}
+	return kIOReturnSuccess;
+}
+
+
 static void destroy_virtqueue(VirtioLegacyPCIVirtqueue* queue)
 {
 	// free any resources allocated for the queue
@@ -414,7 +441,7 @@ static void destroy_virtqueue(VirtioLegacyPCIVirtqueue* queue)
 	OSSafeReleaseNULL(queue->queue_mem);
 }
 
-IOReturn VirtioLegacyPCIDevice::setupVirtqueues(unsigned number_queues)
+IOReturn VirtioLegacyPCIDevice::setupVirtqueues(unsigned number_queues, const bool queue_interrupts_enabled[], unsigned out_queue_sizes[])
 {
 	const size_t queue_array_size = sizeof(this->virtqueues[0]) * number_queues;
 	VirtioLegacyPCIVirtqueue* queues = static_cast<VirtioLegacyPCIVirtqueue*>(
@@ -426,7 +453,7 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueues(unsigned number_queues)
 	IOReturn result = kIOReturnSuccess;
 	for (unsigned i = 0; i < number_queues; ++i)
 	{
-		result = this->setupVirtqueue(&queues[i], i);
+		result = this->setupVirtqueue(&queues[i], i, queue_interrupts_enabled ? queue_interrupts_enabled[i] : true);
 		
 		if (result != kIOReturnSuccess)
 		{
@@ -436,6 +463,11 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueues(unsigned number_queues)
 				destroy_virtqueue(&queues[j]);
 			}
 			goto fail;
+		}
+		
+		if (out_queue_sizes != nullptr)
+		{
+			out_queue_sizes[i] = queues[i].queue.num_entries;
 		}
 	}
 	
@@ -758,19 +790,26 @@ bool VirtioLegacyPCIDevice::outputVringDescSegment(
 	return true;
 }
 
-void VirtioLegacyPCIDevice::processCompletedRequestsInVirtqueue(VirtioVirtqueue* virtqueue)
+unsigned VirtioLegacyPCIDevice::pollCompletedRequestsInVirtqueue(unsigned queue_index, unsigned completion_limit)
 {
+	return this->processCompletedRequestsInVirtqueue(&this->virtqueues[queue_index].queue, completion_limit);
+}
+
+
+unsigned VirtioLegacyPCIDevice::processCompletedRequestsInVirtqueue(VirtioVirtqueue* virtqueue, unsigned completion_limit)
+{
+	unsigned total_handled = 0;
 	const unsigned queue_len = virtqueue->num_entries;
 	while (true)
 	{
 		uint16_t currentUsedRingHeadIndex = virtqueue->used_ring->head_index;
 		uint16_t nextUsedRingIndex = virtqueue->used_ring_last_head_index;
 		uint16_t numAdded = currentUsedRingHeadIndex - virtqueue->used_ring_last_head_index;
-		if(numAdded == 0)
+		if(numAdded == 0 || total_handled >= completion_limit)
 		{
-			return;
+			return total_handled;
 		}
-		for( ; nextUsedRingIndex != currentUsedRingHeadIndex; nextUsedRingIndex++)
+		for( ; nextUsedRingIndex != currentUsedRingHeadIndex && total_handled < completion_limit; nextUsedRingIndex++)
 		{
 			unsigned item = nextUsedRingIndex % queue_len;
 			uint32_t writtenBytes = virtqueue->used_ring->ring[item].written_bytes;
@@ -792,7 +831,9 @@ void VirtioLegacyPCIDevice::processCompletedRequestsInVirtqueue(VirtioVirtqueue*
 			}
 			completion.action(completion.target, completion.ref, false, writtenBytes);
 		}
-		virtqueue->used_ring_last_head_index = currentUsedRingHeadIndex;
+		virtqueue->used_ring_last_head_index = nextUsedRingIndex;
+		if (virtqueue->interrupts_requested)
+			virtqueue->available_ring->flags = 0; // clear NO_INTERRUPT
 	}
 }
 
@@ -901,6 +942,10 @@ bool VirtioLegacyPCIDevice::interruptFilter(OSObject* me, IOFilterInterruptEvent
 	if (isr & VIRTIO_PCI_DEVICE_ISR_USED)
 	{
 		// disable further virtqueue interrupts until the handler has run?
+		for (unsigned i = 0; i < virtio_pci->num_virtqueues; ++i)
+		{
+			virtio_pci->virtqueues[i].queue.available_ring->flags = VirtioVringAvailFlag::NO_INTERRUPT;
+		}
 		return true;
 	}
 	return false;
@@ -939,7 +984,7 @@ void VirtioLegacyPCIDevice::interruptAction(IOInterruptEventSource* source, int 
 	
 	for(unsigned i = 0; i < this->num_virtqueues; i++)
 	{
-		this->processCompletedRequestsInVirtqueue(&this->virtqueues[i].queue);
+		this->processCompletedRequestsInVirtqueue(&this->virtqueues[i].queue, 0 /* no limit */);
 	}
 }
 

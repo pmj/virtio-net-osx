@@ -31,18 +31,20 @@ protected:
 	uint32_t virtio_device_type;
 	
 public:
-    virtual bool matchPropertyTable(OSDictionary* table, SInt32* score) override;
+	virtual bool matchPropertyTable(OSDictionary* table, SInt32* score) override;
 
 	virtual bool resetDevice() = 0;
 	virtual uint32_t supportedFeatures() = 0;
 	virtual bool requestFeatures(uint32_t use_features) = 0;
 	virtual void failDevice() = 0;
-	virtual IOReturn setupVirtqueues(unsigned number_queues) = 0;
+	virtual IOReturn setupVirtqueues(unsigned number_queues, const bool queue_interrupts_enabled[] = nullptr, unsigned out_queue_sizes[] = nullptr) = 0;
+	virtual IOReturn setVirtqueueInterruptsEnabled(unsigned queue_id, bool enabled) = 0;
 	
 	typedef void(*ConfigChangeAction)(OSObject* target, VirtioDevice* source);
 	virtual void startDevice(ConfigChangeAction action = nullptr, OSObject* target = nullptr) = 0;
 	
 	virtual IOReturn submitBuffersToVirtqueue(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion) = 0;
+	virtual unsigned pollCompletedRequestsInVirtqueue(unsigned queue_index, unsigned completion_limit = 0) = 0;
 	
 	virtual uint8_t readDeviceSpecificConfig8(unsigned device_specific_offset) = 0;
 	virtual uint32_t readDeviceSpecificConfig32LE(unsigned device_specific_offset) = 0;
@@ -95,6 +97,10 @@ struct VirtioVirtqueue
 	uint16_t used_ring_last_head_index;
 	
 	VirtioBuffer* descriptor_buffers;
+
+	/// Whether or not the client driver would like interrupts on request completion
+	bool interrupts_requested;
+
 	/// If >= 0, an unused descriptor table entry, with all others chained along next_desc
 	int16_t first_unused_descriptor_index;
 	unsigned num_unused_descriptors;
@@ -123,6 +129,14 @@ struct VirtioVringAvail
 	uint16_t head_index;
 	uint16_t ring[];
 };
+namespace VirtioVringAvailFlag
+{
+	enum VirtioVringAvailFlags : uint16_t
+	{
+		NO_INTERRUPT = 1
+	};
+}
+
 struct VirtioVringUsedElement
 {
 	uint32_t descriptor_id;
@@ -143,5 +157,12 @@ struct VirtioVringUsed
 	VirtioVringUsedElement ring[];
 };
 
+namespace VirtioDeviceGenericFeature
+{
+  enum VirtioDeviceGenericFeatures
+	{
+		VIRTIO_F_RING_EVENT_IDX = (1u << 29u),
+	};
+}
 
 #endif /* defined(__virtio_osx__VirtioDevice__) */
