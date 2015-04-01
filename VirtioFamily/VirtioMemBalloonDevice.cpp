@@ -77,8 +77,7 @@ bool VirtioMemBalloonDevice::start(IOService* provider)
 			IOLog("VirtioMemBalloonDevice::start(): num_pages = %u, actual = %u\n", num_pages, actual);
 			me->inflateDeflateIfNecessary(num_pages);
 			return kIOReturnSuccess;
-		},
-		this);
+		});
 	
 	return true;
 }

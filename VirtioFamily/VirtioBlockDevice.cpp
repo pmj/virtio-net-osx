@@ -9,11 +9,14 @@
 #include "VirtioBlockDevice.h"
 #include "VirtioDevice.h"
 #include "../virtio-net/SSDCMultiSubrangeMemoryDescriptor.h"
-#include <IOKit/IOLib.h>
 #include <IOKit/IOCommandGate.h>
+#include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 
 OSDefineMetaClassAndStructors(VirtioBlockDevice, IOBlockStorageDevice);
+
+static VirtioBlockDeviceRequest* virtio_block_device_request_create();
+static void virtio_block_device_request_free(VirtioBlockDeviceRequest* request);
 
 namespace VirtioBlockDeviceFeatures
 {
@@ -35,6 +38,86 @@ namespace VirtioBlockDeviceFeatures
 		| VirtioBlockDeviceFeatures::VIRTIO_BLK_F_RO;
 }
 
+struct VirtioBlockDeviceRequest;
+typedef IOReturn(*VirtioBlockDeviceRequestSubmitFn)(VirtioBlockDevice* device, VirtioBlockDeviceRequest* request);
+
+struct VirtioBlockDeviceRequest
+{
+	genc_slist_head_t head;
+	
+	IOBufferMemoryDescriptor* header;
+	SSDCMultiSubrangeMemoryDescriptor* subrange_md;
+	IOBufferMemoryDescriptor* status;
+	
+	SSDCMemoryDescriptorSubrange subranges[2];
+	
+	IOStorageCompletion storage_completion;
+	uint64_t length;
+	
+	VirtioBlockDeviceRequestSubmitFn submit_fn;
+};
+
+
+
+struct virtio_blk_req_header
+{
+	uint32_t type;
+	uint32_t reserved;
+	uint64_t sector;
+};
+
+static VirtioBlockDeviceRequest* virtio_block_device_request_create()
+{
+	IOBufferMemoryDescriptor* header = IOBufferMemoryDescriptor::inTaskWithOptions(
+		kernel_task, kIODirectionOut, sizeof(virtio_blk_req_header), alignof(virtio_blk_req_header));
+	IOBufferMemoryDescriptor* status = IOBufferMemoryDescriptor::inTaskWithOptions(
+		kernel_task, kIODirectionIn, sizeof(uint8_t), alignof(uint8_t));
+	SSDCMultiSubrangeMemoryDescriptor* subrange_md = SSDCMultiSubrangeMemoryDescriptor::withDescriptorRanges(
+		nullptr, 0, kIODirectionNone, false);
+	VirtioBlockDeviceRequest* request = static_cast<VirtioBlockDeviceRequest*>(
+		IOMallocAligned(sizeof(struct VirtioBlockDeviceRequest), alignof(struct VirtioBlockDeviceRequest)));
+	if (header == nullptr || status == nullptr || subrange_md == nullptr || request == nullptr)
+	{
+		OSSafeReleaseNULL(header);
+		OSSafeReleaseNULL(status);
+		OSSafeReleaseNULL(subrange_md);
+		if (request != nullptr)
+			IOFreeAligned(request, sizeof(*request));
+		return nullptr;
+	}
+	
+	memset(request, 0, sizeof(*request));
+	request->header = header;
+	request->status = status;
+	request->subrange_md = subrange_md;
+	
+	return request;
+}
+
+static void virtio_block_device_request_free(VirtioBlockDeviceRequest* request)
+{
+	OSSafeReleaseNULL(request->header);
+	OSSafeReleaseNULL(request->status);
+	OSSafeReleaseNULL(request->subrange_md);
+	IOFreeAligned(request, sizeof(*request));
+}
+
+
+enum VirtioBlockRequestType
+{
+	VIRTIO_BLK_T_IN = 0,
+	VIRTIO_BLK_T_OUT = 1,
+	VIRTIO_BLK_T_FLUSH = 4,
+	VIRTIO_BLK_T_FLUSH_OUT = 5,
+};
+
+enum VirtioBlockRequestStatus
+{
+	 VIRTIO_BLK_S_OK = 0,
+	 VIRTIO_BLK_S_IOERR = 1,
+	 VIRTIO_BLK_S_UNSUPP = 2,
+};
+
 
 bool VirtioBlockDevice::start(IOService* provider)
 {
@@ -55,7 +138,7 @@ bool VirtioBlockDevice::start(IOService* provider)
 	uint32_t use_features = dev_features & VirtioBlockDeviceFeatures::SUPPORTED_FEATURES;
 	this->active_features = use_features;
 	
-	
+	genc_slq_init(&this->pending_requests);
 	
 	bool ok = virtio->requestFeatures(use_features);
 	if (!ok)
@@ -65,17 +148,26 @@ bool VirtioBlockDevice::start(IOService* provider)
 		return false;
 	}
 	
-	IOReturn result = virtio->setupVirtqueues(1);
+	unsigned queue_size = 0;
+	IOReturn result = virtio->setupVirtqueues(1, nullptr, &queue_size);
 	if (result != kIOReturnSuccess)
 	{
 		virtio->failDevice();
 		virtio->close(this);
 		return false;
 	}
+	
 	IOWorkLoop* work_loop = this->getWorkLoop();
 	this->command_gate = IOCommandGate::commandGate(this);
 	this->command_gate->setWorkLoop(work_loop);
 
+	unsigned pool_size = queue_size + 32;
+	for (unsigned i = 0; i < pool_size; ++i)
+	{
+		VirtioBlockDeviceRequest* request = virtio_block_device_request_create();
+		this->returnRequestToPool(request);
+	}
+	
 	this->virtio_device = virtio;
 	virtio->startDevice(&deviceConfigChangeAction, this);
 	
@@ -95,10 +187,10 @@ bool VirtioBlockDevice::start(IOService* provider)
 			}
 			
 			me->block_size = block_size;
+			me->sectors_per_block = block_size / 512;
 			IOLog("VirtioBlockDevice::start(): capacity = %llu, size_max = %u, seg_max = %u, block_size = %u\n", capacity, size_max, seg_max, block_size);
 			return kIOReturnSuccess;
-		},
-		this);
+		});
 	
 	this->registerService();
 	
@@ -139,9 +231,16 @@ void VirtioBlockDevice::stop(IOService* provider)
 	if (this->command_gate)
 		this->command_gate->setWorkLoop(nullptr);
 	OSSafeReleaseNULL(this->command_gate);
+	
+	while (this->request_pool != nullptr)
+	{
+		VirtioBlockDeviceRequest* request = genc_slist_remove_object_at(
+			&this->request_pool, VirtioBlockDeviceRequest, head);
+		virtio_block_device_request_free(request);
+	}
+	
 	IOBlockStorageDevice::stop(provider);
 	VLTLog("VirtioMemBalloonDevice::stop(): done\n");
-
 }
 
 bool VirtioBlockDevice::didTerminate( IOService * provider, IOOptionBits options, bool * defer )
@@ -153,53 +252,128 @@ bool VirtioBlockDevice::didTerminate( IOService * provider, IOOptionBits options
 	return res;
 }
 
-void VirtioBlockDevice::blockRequestCompleted(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written)
+VirtioBlockDeviceRequest* VirtioBlockDevice::requestFromPool()
 {
-	VirtioBlockDevice* me = static_cast<VirtioBlockDevice*>(target);
-	me->blockRequestCompleted();
-
+	VirtioBlockDeviceRequest* request = genc_slist_remove_object_at(&this->request_pool, VirtioBlockDeviceRequest, head);
+	while (request == nullptr)
+	{
+		this->command_gate->commandSleep(&this->request_pool, THREAD_UNINT);
+	}
+	return request;
+}
+void VirtioBlockDevice::returnRequestToPool(VirtioBlockDeviceRequest* request)
+{
+	genc_slist_insert_at(&request->head, &this->request_pool);
+	this->command_gate->commandWakeup(&this->request_pool, true);
 }
 
-void VirtioBlockDevice::blockRequestCompleted()
-{
 
-}
 
 IOReturn VirtioBlockDevice::doSynchronizeCache(void)
 {
 	return kIOReturnError;
 }
 
-struct VirtioBlockDeviceRequest
+
+struct args
 {
-	IOBufferMemoryDescriptor* header;
-	SSDCMultiSubrangeMemoryDescriptor* buffer;
-	IOBufferMemoryDescriptor* status;
-	
+	IOMemoryDescriptor* buffer;
+	UInt64 block;
+	UInt64 nblks;
+	IOStorageAttributes* attributes;
+	IOStorageCompletion* completion;
 };
 
 IOReturn VirtioBlockDevice::doAsyncReadWrite(IOMemoryDescriptor* buffer, UInt64 block, UInt64 nblks, IOStorageAttributes* attributes, IOStorageCompletion* completion)
 {
+	//kprintf("VirtioBlockDevice[%p]::doAsyncReadWrite(%p, %llu, %llu, %p, %p);\n", this, buffer, block, nblks, attributes, completion);
+	args a = { buffer, block, nblks, attributes, completion };
+	return this->command_gate->runAction(&doAsyncReadWriteOnWorkLoop, &a);
+}
+
+IOReturn VirtioBlockDevice::doAsyncReadWriteOnWorkLoop(
+	OSObject* block_dev, void* arg0, void* arg1, void* arg2, void* arg3)
+{
+	args* a = static_cast<args*>(arg0);
+	VirtioBlockDevice* me = static_cast<VirtioBlockDevice*>(block_dev);
+	return me->doAsyncReadWriteOnWorkLoop(a->buffer, a->block, a->nblks, a->attributes, a->completion);
+}
+
+
+IOReturn VirtioBlockDevice::doAsyncReadWriteOnWorkLoop(IOMemoryDescriptor* buffer, UInt64 block, UInt64 nblks, IOStorageAttributes* attributes, IOStorageCompletion* completion)
+{
 	IODirection direction = buffer->getDirection();
-	if(buffer->getLength() < (nblks * block_size))
+	uint64_t request_length = (nblks * this->block_size);
+	if(buffer->getLength() < request_length)
 	{
 		//buffer too small
 		return kIOReturnBadArgument;
 	}
 	
-	if((block + nblks)* block_size > capacity_in_bytes)
+	if((block + nblks) * this->block_size > this->capacity_in_bytes)
 	{
 		//bigger than the block
 		return kIOReturnBadArgument;
 	}
 	
+	VirtioBlockDeviceRequest* request = this->requestFromPool();
+	//kprintf("VirtioBlockDevice[%p]::doAsyncReadWriteOnWorkLoop(%p, %llu, %llu, %p, %p), request = %p, direction = %u\n", this, buffer, block, nblks, attributes, completion, request, direction);
+	request->length = request_length;
+	virtio_blk_req_header* header = static_cast<virtio_blk_req_header*>(request->header->getBytesNoCopy());
+
 	if(direction == kIODirectionIn)
 	{
 		//Disk read
+		header->type = VIRTIO_BLK_T_IN;
+		header->reserved = 0;
+		header->sector = block * this->sectors_per_block;
+		
+		request->subranges[0].md = buffer;
+		request->subranges[0].length = request_length;
+		request->subranges[0].offset = 0;
+		
+		request->subranges[1].md = request->status;
+		request->subranges[1].length = request->status->getLength();
+		request->subranges[1].offset = 0;
+		
+		request->subrange_md->initWithDescriptorRanges(request->subranges, 2, direction, false);
+		
+		request->storage_completion = *completion;
+		
+		request->submit_fn =
+			[](VirtioBlockDevice* device, VirtioBlockDeviceRequest* request)
+			{
+				VirtioCompletion my_completion = { &blockRequestCompleted, device, request };
+				return device->virtio_device->submitBuffersToVirtqueue(0, request->header, request->subrange_md, my_completion);
+			};
+		
 	}
 	else if (direction == kIODirectionOut)
 	{
+
 		//Disk write
+		header->type = VIRTIO_BLK_T_OUT;
+		header->reserved = 0;
+		header->sector = block * this->sectors_per_block;
+		
+		request->subranges[0].md = request->header;
+		request->subranges[0].length = request->header->getLength();
+		request->subranges[0].offset = 0;
+		
+		request->subranges[1].md = buffer;
+		request->subranges[1].length = request_length;
+		request->subranges[1].offset = 0;
+		
+		request->subrange_md->initWithDescriptorRanges(request->subranges, 2, direction, false);
+		
+		request->storage_completion = *completion;
+
+		request->submit_fn =
+			[](VirtioBlockDevice* device, VirtioBlockDeviceRequest* request)
+			{
+				VirtioCompletion my_completion = { &blockRequestCompleted, device, request };
+				return device->virtio_device->submitBuffersToVirtqueue(0, request->subrange_md, request->status, my_completion);
+			};
 	}
 	else
 	{
@@ -207,13 +381,100 @@ IOReturn VirtioBlockDevice::doAsyncReadWrite(IOMemoryDescriptor* buffer, UInt64 
 		return kIOReturnBadArgument;
 	}
 
+	IOReturn submit_result = kIOReturnNoSpace;
+	if (genc_slq_is_empty(&this->pending_requests))
+		submit_result = request->submit_fn(this, request);
+
+	if (submit_result == kIOReturnNoSpace || submit_result == kIOReturnBusy)
+	{
+		//kprintf("VirtioBlockDevice[%p]::doAsyncReadWriteOnWorkLoop(): deferring request %p to queue (submit_result = %x)\n", this, request, submit_result);
+		// not enough space in virtqueue
+		genc_slq_push_back(&this->pending_requests, &request->head);
+		submit_result = kIOReturnSuccess;
+	}
+	//kprintf("VirtioBlockDevice[%p]::doAsyncReadWriteOnWorkLoop(): submit_result = %x\n", this, submit_result);
 	//VirtioCompletion completion = { &blockRequestCompleted, this };
-	return kIOReturnError;
+	return submit_result;
 }
+
+void VirtioBlockDevice::blockRequestCompleted(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written)
+{
+	VirtioBlockDevice* me = static_cast<VirtioBlockDevice*>(target);
+	me->blockRequestCompleted(static_cast<VirtioBlockDeviceRequest*>(ref), device_reset);
+
+}
+
+void VirtioBlockDevice::blockRequestCompleted(VirtioBlockDeviceRequest* request, bool device_reset)
+{
+	IOReturn result;
+	uint64_t actual_bytes = 0;
+	if(device_reset)
+	{
+		//device shutdown
+		result = kIOReturnAborted;
+	}
+	else
+	{
+		uint8_t status = *static_cast<uint8_t*>(request->status->getBytesNoCopy());
+		if(status == VIRTIO_BLK_S_OK)
+		{
+			result = kIOReturnSuccess;
+			actual_bytes = request->length;
+		}
+		else if(status == VIRTIO_BLK_S_IOERR)
+		{
+			result = kIOReturnIOError;
+		}
+		else if (status == VIRTIO_BLK_S_UNSUPP)
+		{
+			result = kIOReturnUnsupported;
+		}
+		else
+		{
+			result = kIOReturnDeviceError;
+		}
+	}
+	
+	//kprintf("VirtioBlockDevice[%p]::blockRequestCompleted(), request = %p, result = %x\n", this, request, result);
+
+	request->subrange_md->initWithDescriptorRanges(nullptr, 0, kIODirectionNone, false);
+	IOStorageCompletion completion = request->storage_completion;
+	this->returnRequestToPool(request);
+	completion.action(completion.target, completion.parameter, result, actual_bytes);
+	
+	if (!device_reset)
+	{
+		while (!genc_slq_is_empty(&this->pending_requests))
+		{
+			VirtioBlockDeviceRequest* next_request =
+				genc_slq_pop_front_object(&this->pending_requests, VirtioBlockDeviceRequest, head);
+			IOReturn submit_result = next_request->submit_fn(this, next_request);
+			if (submit_result != kIOReturnSuccess)
+			{
+				genc_slq_push_front(&this->pending_requests, &next_request->head);
+				break;
+			}
+		}
+	}
+	else
+	{
+		while (!genc_slq_is_empty(&this->pending_requests))
+		{
+			VirtioBlockDeviceRequest* next_request =
+				genc_slq_pop_front_object(&this->pending_requests, VirtioBlockDeviceRequest, head);
+
+			next_request->subrange_md->initWithDescriptorRanges(nullptr, 0, kIODirectionNone, false);
+			IOStorageCompletion completion = next_request->storage_completion;
+			this->returnRequestToPool(next_request);
+			completion.action(completion.target, completion.parameter, kIOReturnAborted, 0);
+		}
+	}
+}
+
 
 IOReturn VirtioBlockDevice::doEjectMedia(void)
 {
-	return kIOReturnSuccess;
+	return kIOReturnUnsupported;
 }
 IOReturn VirtioBlockDevice::doFormatMedia(UInt64 byteCapacity)
 {
@@ -222,23 +483,26 @@ IOReturn VirtioBlockDevice::doFormatMedia(UInt64 byteCapacity)
 
 UInt32 VirtioBlockDevice::doGetFormatCapacities(UInt64* capacities, UInt32 capacitiesMaxCount) const
 {
-	return 0;
+	if (capacities != nullptr && capacitiesMaxCount < 1)
+		return 0;
+	if (capacities != nullptr)
+		capacities[0] = capacity_in_bytes;
+	return 1;
 }
 
 IOReturn VirtioBlockDevice::doLockUnlockMedia(bool doLock)
 {
-	doLock = false;
-	return kIOReturnSuccess;
+	return kIOReturnUnsupported;
 }
 
 char* VirtioBlockDevice::getVendorString(void)
 {
-	return (char*)"VirtioBlockDevice::getVendorString";
+	return (char*)"Virtio";
 }
 
 char* VirtioBlockDevice::getProductString(void)
 {
-	return (char*)"VirtioBlockDevice::getProductString";
+	return (char*)"Virtio Block Device";
 }
 
 char* VirtioBlockDevice::getRevisionString(void)

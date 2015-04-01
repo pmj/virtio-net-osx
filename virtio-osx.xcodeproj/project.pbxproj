@@ -19,6 +19,13 @@
 		29CD526E13DD86D40062DAA6 /* readme.md in Resources */ = {isa = PBXBuildFile; fileRef = 29CD526D13DD86D40062DAA6 /* readme.md */; };
 		D395DCC71AC96F0C00C4EE18 /* VirtioBlockDevice.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D395DCC51AC96F0C00C4EE18 /* VirtioBlockDevice.cpp */; };
 		D395DCC81AC96F0C00C4EE18 /* VirtioBlockDevice.h in Headers */ = {isa = PBXBuildFile; fileRef = D395DCC61AC96F0C00C4EE18 /* VirtioBlockDevice.h */; };
+		D395DCD01ACAD4F200C4EE18 /* slist_queue.c in Sources */ = {isa = PBXBuildFile; fileRef = D395DCCB1ACAD4F200C4EE18 /* slist_queue.c */; };
+		D395DCD11ACAD4F200C4EE18 /* slist_queue.h in Headers */ = {isa = PBXBuildFile; fileRef = D395DCCC1ACAD4F200C4EE18 /* slist_queue.h */; };
+		D395DCD21ACAD4F200C4EE18 /* slist.c in Sources */ = {isa = PBXBuildFile; fileRef = D395DCCD1ACAD4F200C4EE18 /* slist.c */; };
+		D395DCD31ACAD4F200C4EE18 /* slist.h in Headers */ = {isa = PBXBuildFile; fileRef = D395DCCE1ACAD4F200C4EE18 /* slist.h */; };
+		D395DCD41ACAD4F200C4EE18 /* util.h in Headers */ = {isa = PBXBuildFile; fileRef = D395DCCF1ACAD4F200C4EE18 /* util.h */; };
+		D395DCD81ACAF01900C4EE18 /* PJCommandGate.h in Headers */ = {isa = PBXBuildFile; fileRef = D395DCD61ACAF01900C4EE18 /* PJCommandGate.h */; };
+		D3A434B01ACAF57800EE7F73 /* SSDCMultiSubrangeMemoryDescriptor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 294EC53A186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.cpp */; };
 		D3D41D321AB84E470021F71A /* VirtioFamily.h in Headers */ = {isa = PBXBuildFile; fileRef = D3D41D311AB84E470021F71A /* VirtioFamily.h */; };
 		D3D41D341AB84E470021F71A /* VirtioFamily.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D3D41D331AB84E470021F71A /* VirtioFamily.cpp */; };
 		D3D41D3A1AB860CC0021F71A /* VirtioLegacyPCIDevice.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D3D41D381AB860CC0021F71A /* VirtioLegacyPCIDevice.cpp */; };
@@ -50,6 +57,13 @@
 		29CD526D13DD86D40062DAA6 /* readme.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; name = readme.md; path = ../readme.md; sourceTree = "<group>"; };
 		D395DCC51AC96F0C00C4EE18 /* VirtioBlockDevice.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = VirtioBlockDevice.cpp; sourceTree = "<group>"; };
 		D395DCC61AC96F0C00C4EE18 /* VirtioBlockDevice.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = VirtioBlockDevice.h; sourceTree = "<group>"; };
+		D395DCCB1ACAD4F200C4EE18 /* slist_queue.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = slist_queue.c; sourceTree = "<group>"; };
+		D395DCCC1ACAD4F200C4EE18 /* slist_queue.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = slist_queue.h; sourceTree = "<group>"; };
+		D395DCCD1ACAD4F200C4EE18 /* slist.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = slist.c; sourceTree = "<group>"; };
+		D395DCCE1ACAD4F200C4EE18 /* slist.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = slist.h; sourceTree = "<group>"; };
+		D395DCCF1ACAD4F200C4EE18 /* util.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = util.h; sourceTree = "<group>"; };
+		D395DCD51ACAF01900C4EE18 /* PJCommandGate.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = PJCommandGate.cpp; sourceTree = "<group>"; };
+		D395DCD61ACAF01900C4EE18 /* PJCommandGate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PJCommandGate.h; sourceTree = "<group>"; };
 		D3D41D2D1AB84E470021F71A /* VirtioFamily.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VirtioFamily.kext; sourceTree = BUILT_PRODUCTS_DIR; };
 		D3D41D301AB84E470021F71A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		D3D41D311AB84E470021F71A /* VirtioFamily.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VirtioFamily.h; sourceTree = "<group>"; };
@@ -89,6 +103,7 @@
 			children = (
 				299F18EE13DC183D000200A5 /* virtio-net */,
 				D3D41D2E1AB84E470021F71A /* VirtioFamily */,
+				D395DCC91ACAD4C400C4EE18 /* lib */,
 				299F18EB13DC183D000200A5 /* Frameworks */,
 				299F18EA13DC183D000200A5 /* Products */,
 			);
@@ -148,6 +163,27 @@
 			name = "Supporting Files";
 			sourceTree = "<group>";
 		};
+		D395DCC91ACAD4C400C4EE18 /* lib */ = {
+			isa = PBXGroup;
+			children = (
+				D395DCCA1ACAD4C800C4EE18 /* genccont */,
+			);
+			path = lib;
+			sourceTree = "<group>";
+		};
+		D395DCCA1ACAD4C800C4EE18 /* genccont */ = {
+			isa = PBXGroup;
+			children = (
+				D395DCCF1ACAD4F200C4EE18 /* util.h */,
+				D395DCCE1ACAD4F200C4EE18 /* slist.h */,
+				D395DCCD1ACAD4F200C4EE18 /* slist.c */,
+				D395DCCC1ACAD4F200C4EE18 /* slist_queue.h */,
+				D395DCCB1ACAD4F200C4EE18 /* slist_queue.c */,
+			);
+			name = genccont;
+			path = genccont/src;
+			sourceTree = "<group>";
+		};
 		D3D41D2E1AB84E470021F71A /* VirtioFamily */ = {
 			isa = PBXGroup;
 			children = (
@@ -165,6 +201,8 @@
 				D395DCC51AC96F0C00C4EE18 /* VirtioBlockDevice.cpp */,
 				D3E6DCE21AC5A231002443CE /* VirtioNetworkDevice.h */,
 				D3E6DCE11AC5A231002443CE /* VirtioNetworkDevice.cpp */,
+				D395DCD61ACAF01900C4EE18 /* PJCommandGate.h */,
+				D395DCD51ACAF01900C4EE18 /* PJCommandGate.cpp */,
 				D3D41D2F1AB84E470021F71A /* Supporting Files */,
 			);
 			path = VirtioFamily;
@@ -196,12 +234,16 @@
 			isa = PBXHeadersBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D395DCD41ACAD4F200C4EE18 /* util.h in Headers */,
+				D395DCD31ACAD4F200C4EE18 /* slist.h in Headers */,
 				D3E6DCE41AC5A231002443CE /* VirtioNetworkDevice.h in Headers */,
+				D395DCD81ACAF01900C4EE18 /* PJCommandGate.h in Headers */,
 				D3D41D321AB84E470021F71A /* VirtioFamily.h in Headers */,
 				D395DCC81AC96F0C00C4EE18 /* VirtioBlockDevice.h in Headers */,
 				D3D41D431ABB4D4D0021F71A /* VirtioMemBalloonDevice.h in Headers */,
 				D3D41D3B1AB860CC0021F71A /* VirtioLegacyPCIDevice.h in Headers */,
 				D3D41D471ABC386B0021F71A /* VirtioDevice.h in Headers */,
+				D395DCD11ACAD4F200C4EE18 /* slist_queue.h in Headers */,
 				D3D41D3F1AB86AA10021F71A /* VirtioPCIDevice.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -323,9 +365,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				D395DCC71AC96F0C00C4EE18 /* VirtioBlockDevice.cpp in Sources */,
+				D395DCD01ACAD4F200C4EE18 /* slist_queue.c in Sources */,
+				D3A434B01ACAF57800EE7F73 /* SSDCMultiSubrangeMemoryDescriptor.cpp in Sources */,
 				D3D41D3A1AB860CC0021F71A /* VirtioLegacyPCIDevice.cpp in Sources */,
 				D3D41D461ABC386B0021F71A /* VirtioDevice.cpp in Sources */,
 				D3D41D421ABB4D4D0021F71A /* VirtioMemBalloonDevice.cpp in Sources */,
+				D395DCD21ACAD4F200C4EE18 /* slist.c in Sources */,
 				D3D41D341AB84E470021F71A /* VirtioFamily.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

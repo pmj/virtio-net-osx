@@ -10,8 +10,13 @@
 #define __virtio_osx__VirtioBlockDevice__
 
 #include "VirtioDevice.h"
+#include "../lib/genccont/src/slist_queue.h"
 #include <IOKit/storage/IOBlockStorageDevice.h>
 #define VirtioBlockDevice eu_dennis__jordan_driver_VirtioBlockDevice
+
+class IOCommandGate;
+
+struct VirtioBlockDeviceRequest;
 
 class IOBufferMemoryDescriptor;
 class VirtioBlockDevice : public IOBlockStorageDevice
@@ -28,6 +33,18 @@ protected:
 	uint32_t block_size;
 	uint32_t active_features;
 	uint64_t capacity_in_bytes;
+	uint32_t sectors_per_block;
+	VirtioBlockDeviceRequest* requestFromPool();
+	void returnRequestToPool(VirtioBlockDeviceRequest* request);
+	
+	// Requests received that will not fit into the device's virtqueue
+	genc_slist_queue_t pending_requests;
+	
+	// Pool of unused request data structures
+	genc_slist_head_t* request_pool;
+
+	static IOReturn doAsyncReadWriteOnWorkLoop(OSObject* block_dev, void* arg0, void* arg1, void* arg2, void* arg3);
+	IOReturn doAsyncReadWriteOnWorkLoop(IOMemoryDescriptor* buffer, UInt64 block, UInt64 nblks, IOStorageAttributes* attributes, IOStorageCompletion* completion);
 	
 public:
 	virtual bool start(IOService* provider) override;
@@ -59,7 +76,7 @@ public:
 	virtual IOReturn doAsyncReadWrite(IOMemoryDescriptor* buffer, UInt64 block, UInt64 nblks, IOStorageAttributes* attributes, IOStorageCompletion* completion) override;
 	
 	static void blockRequestCompleted(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written);
-	virtual void blockRequestCompleted();
+	virtual void blockRequestCompleted(VirtioBlockDeviceRequest* request, bool device_reset);
 
 #ifdef VIRTIO_LOG_TERMINATION
 	virtual bool requestTerminate( IOBlockStorageDevice * provider, IOOptionBits options ) override;

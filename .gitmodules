@@ -1,0 +1,3 @@
+[submodule "lib/genccont"]
+	path = lib/genccont
+	url = https://github.com/pmj/genccont.git

@@ -77,7 +77,7 @@ namespace
 
 IOService* VirtioLegacyPCIDevice::probe(IOService* provider, SInt32* score)
 {
-	IOLog("VirtioLegacyPCIDevice::probe()\n");
+	//IOLog("VirtioLegacyPCIDevice::probe()\n");
 	IOPCIDevice* pci_dev = OSDynamicCast(IOPCIDevice, provider);
 	if (!pci_dev)
 	{
@@ -115,7 +115,7 @@ bool VirtioLegacyPCIDevice::start(IOService* provider)
 	{
 		return false;
 	}
-	IOLog("VirtioLegacyPCIDevice::start()\n");
+	//IOLog("VirtioLegacyPCIDevice::start()\n");
 	IOPCIDevice* pciDevice = OSDynamicCast(IOPCIDevice, provider);
 	OSObject* subSystemDeviceID = pciDevice->getProperty("subsystem-id");
 	if(subSystemDeviceID == NULL)
@@ -186,8 +186,10 @@ bool VirtioLegacyPCIDevice::mapHeaderIORegion()
 		IOLog("writeDeviceStatusField mapConfigurationSpace(): Error! Memory-Mapping configuration space failed.\n");
 		return false;
 	}
+	/*
 	IOLog("writeDeviceStatusField mapConfigurationSpace(): Mapped %llu bytes of device memory at %llX. (physical address %llX)\n",
 		static_cast<uint64_t>(iomap->getLength()), iomap->getAddress(), this->pci_device->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0)->getPhysicalSegment(0, NULL, 0));
+	*/
 	this->pci_virtio_header_iomap = iomap;
 	return true;
 }
@@ -282,7 +284,7 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, 
 		IOLog("VirtioLegacyPCIDevice::setupVirtqueue(): Queue size for queue %u is %u, which is not a power of 2. Aborting.\n", queue_id, num_queue_entries);
 		return kIOReturnDeviceError;
 	}
-	IOLog("VirtioLegacyPCIDevice::setupVirtqueue(): Queue size for queue %u is %u.\n", queue_id, num_queue_entries);
+	//IOLog("VirtioLegacyPCIDevice::setupVirtqueue(): Queue size for queue %u is %u.\n", queue_id, num_queue_entries);
 
 	// calculate queue memory size
 	const size_t queue_mem_size = vring_mem_size(num_queue_entries);
@@ -622,7 +624,7 @@ IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueue(unsigned queue_index, I
 		
 		// 1. reserve a descriptor
 		int16_t descriptorIndex = reserveNewDescriptor(queue);
-		IOLog("VirtioLegacyPCIDevice::submitBuffersToVirtqueue(): reserved descriptor %d as first device_readable\n", descriptorIndex);
+		//IOLog("VirtioLegacyPCIDevice::submitBuffersToVirtqueue(): reserved descriptor %d as first device_readable\n", descriptorIndex);
 		// 2. save it as first_descriptor_index
 		first_descriptor_index = descriptorIndex;
 		// 3. save it as chain.reserved_descriptor_index
@@ -670,7 +672,7 @@ IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueue(unsigned queue_index, I
 		
 		// 1. reserve a descriptor
 		int16_t descriptorIndex = reserveNewDescriptor(queue);
-		IOLog("VirtioLegacyPCIDevice::submitBuffersToVirtqueue(): reserved descriptor %d as first device writable\n", descriptorIndex);
+		//IOLog("VirtioLegacyPCIDevice::submitBuffersToVirtqueue(): reserved descriptor %d as first device writable\n", descriptorIndex);
 		// 2. save it as first_descriptor_index
 		VirtioBuffer* desc_buffer = &queue->descriptor_buffers[descriptorIndex];
 		if(first_descriptor_index == UINT16_MAX)
@@ -764,7 +766,7 @@ bool VirtioLegacyPCIDevice::outputVringDescSegment(
 	else
 	{
 		descriptorIndex = reserveNewDescriptor(queue);
-		IOLog("VirtioLegacyPCIDevice::outputVringDescSegment(): reserved descriptor %d for segment %u\n", descriptorIndex,segmentIndex);
+		//IOLog("VirtioLegacyPCIDevice::outputVringDescSegment(): reserved descriptor %d for segment %u\n", descriptorIndex,segmentIndex);
 	}
 	
 	VirtioVringDesc* descriptor = &queue->descriptor_table[descriptorIndex];
@@ -817,11 +819,17 @@ unsigned VirtioLegacyPCIDevice::processCompletedRequestsInVirtqueue(VirtioVirtqu
 		uint16_t currentUsedRingHeadIndex = virtqueue->used_ring->head_index;
 		uint16_t nextUsedRingIndex = virtqueue->used_ring_last_head_index;
 		uint16_t numAdded = currentUsedRingHeadIndex - virtqueue->used_ring_last_head_index;
-		if(numAdded == 0 || total_handled >= completion_limit)
+		if(numAdded == 0 || (completion_limit != 0 && total_handled >= completion_limit))
 		{
-			return total_handled;
+			if (virtqueue->interrupts_requested)
+				virtqueue->available_ring->flags = 0; // clear NO_INTERRUPT
+			OSSynchronizeIO();
+			currentUsedRingHeadIndex = virtqueue->used_ring->head_index;
+			numAdded = currentUsedRingHeadIndex - virtqueue->used_ring_last_head_index;
+			if (numAdded == 0 || (completion_limit != 0 && total_handled >= completion_limit))
+				return total_handled;
 		}
-		for( ; nextUsedRingIndex != currentUsedRingHeadIndex && total_handled < completion_limit; nextUsedRingIndex++)
+		for( ; nextUsedRingIndex != currentUsedRingHeadIndex && (completion_limit == 0 || total_handled < completion_limit); nextUsedRingIndex++)
 		{
 			unsigned item = nextUsedRingIndex % queue_len;
 			uint32_t writtenBytes = virtqueue->used_ring->ring[item].written_bytes;
@@ -837,15 +845,13 @@ unsigned VirtioLegacyPCIDevice::processCompletedRequestsInVirtqueue(VirtioVirtqu
 					virtqueue->descriptor_buffers[descriptorIndex].dma_cmd->clearMemoryDescriptor(true);
 					virtqueue->descriptor_buffers[descriptorIndex].dma_cmd_used = false;
 				}
-				IOLog("VirtioLegacyPCIDevice::processCompletedRequestsInVirtqueue(): returning descriptor %d to unused list\n", descriptorIndex);
+				//IOLog("VirtioLegacyPCIDevice::processCompletedRequestsInVirtqueue(): returning descriptor %d to unused list\n", descriptorIndex);
 				returnUnusedDescriptor(virtqueue, descriptorIndex);
 				descriptorIndex = next;
 			}
 			completion.action(completion.target, completion.ref, false, writtenBytes);
 		}
 		virtqueue->used_ring_last_head_index = nextUsedRingIndex;
-		if (virtqueue->interrupts_requested)
-			virtqueue->available_ring->flags = 0; // clear NO_INTERRUPT
 	}
 }
 
@@ -871,10 +877,10 @@ void VirtioLegacyPCIDevice::stop(IOService* provider)
 
 bool VirtioLegacyPCIDevice::beginHandlingInterrupts()
 {
-	IOLog("virtio-net beginHandlingInterrupts()\n");
+	//IOLog("VirtioLegacyPCIDevice::beginHandlingInterrupts()\n");
 	if (!this->pci_device)
 	{
-		IOLog("virtio-net beginHandlingInterrupts(): Error! PCI device must be known for generating interrupts.\n");
+		IOLog("VirtioLegacyPCIDevice beginHandlingInterrupts(): Error! PCI device must be known for generating interrupts.\n");
 		return false;
 	}
 	
@@ -902,7 +908,7 @@ bool VirtioLegacyPCIDevice::beginHandlingInterrupts()
 	if (msi_index >= 0)
 	{
 		intr_index = msi_index;
-		IOLog("virtio-net beginHandlingInterrupts(): Enabled message signaled interrupts (index %d).\n", intr_index);
+		IOLog("VirtioLegacyPCIDevice beginHandlingInterrupts(): Enabled message signaled interrupts (index %d).\n", intr_index);
 	}
 	else
 	{
@@ -913,7 +919,7 @@ bool VirtioLegacyPCIDevice::beginHandlingInterrupts()
 	this->intr_event_source = IOFilterInterruptEventSource::filterInterruptEventSource(this, &interruptAction, &interruptFilter, this->pci_device, intr_index);
 	if (!intr_event_source)
 	{
-		IOLog("virtio-net beginHandlingInterrupts(): Error! %s interrupt event source failed.\n", intr_event_source ? "Initialising" : "Allocating");
+		IOLog("VirtioLegacyPCIDevice beginHandlingInterrupts(): Error! %s interrupt event source failed.\n", intr_event_source ? "Initialising" : "Allocating");
 		OSSafeReleaseNULL(intr_event_source);
 		return false;
 	}
@@ -924,12 +930,12 @@ bool VirtioLegacyPCIDevice::beginHandlingInterrupts()
 	
 	if (kIOReturnSuccess != this->work_loop->addEventSource(intr_event_source))
 	{
-		IOLog("virtio-net beginHandlingInterrupts(): Error! Adding interrupt event source to work loop failed.\n");
+		IOLog("VirtioLegacyPCIDevice beginHandlingInterrupts(): Error! Adding interrupt event source to work loop failed.\n");
 		OSSafeReleaseNULL(intr_event_source);
 		return false;
 	}
 	intr_event_source->enable();
-	IOLog("virtio-net beginHandlingInterrupts(): now handling interrupts, good to go.\n");
+	//IOLog("VirtioLegacyPCIDevice beginHandlingInterrupts(): now handling interrupts, good to go.\n");
 	return true;
 }
 
