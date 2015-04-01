@@ -34,32 +34,7 @@ class IOFilterInterruptEventSource;
 class IOInterruptEventSource;
 
 struct virtio_net_packet;
-
-struct virtio_net_virtqueue : vring
-{
-	IOBufferMemoryDescriptor* buf;
-	/* Number of free descriptors in the queue */
-	uint16_t num_free_desc;
-	/* The index of the head of the linked list of free descriptors. */
-	uint16_t free_desc_head;
-	
-	uint16_t index;
-	
-	// When this differs from the queue's used index, pop buffers off the used queue to handle/recycle them
-	uint16_t last_used_idx;
-	
-	// Array of pointers to packet structures corresponding to each live buffer descriptor.
-	/* Length is virtqueue size. Used for retrieving the packet corresponding to
-	 * a buffer chain as it comes off the 'used' ring. */
-	virtio_net_packet** packets_for_descs;
-};
-/* Initialise the queue structure, then mark all descriptors as free (in a
- * linked list). Allocates the packets_for_descs array. */
-void virtqueue_init(virtio_net_virtqueue& queue, IOBufferMemoryDescriptor* buf, uint16_t queue_size, uint16_t queue_id);
-/// Releases the buffer, frees the packets_for_descs array and clears fields.
-void virtqueue_free(virtio_net_virtqueue& queue);
-
-struct virtio_net_packet;
+struct virtio_net_virtqueue;
 
 class PJVirtioNet : public IOEthernetController
 {
@@ -190,11 +165,13 @@ protected:
 	 * as necessary. Returns true on success, false on failure. The mbuf is not
 	 * freed in either case (but referenced as a buffer in case of success).
 	 */
-	IOReturn addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx);
+	IOReturn addPacketToQueue(mbuf_t packet_mbuf, unsigned queue_id, bool for_writing);
+	IOReturn addPacketToTransmitQueue(mbuf_t packet_mbuf);
 	virtio_net_packet* allocPacket();
 	/// Segment output function for the DMA command, adds a physical memory segment to the buffer descriptor chain
 	static bool outputPacketSegment(IODMACommand* target, IODMACommand::Segment64 segment, void* segments, UInt32 segmentIndex);
 
+	void freeVirtioPacket(virtio_net_packet* packet);
 	void freeDescriptorChain(virtio_net_virtqueue& queue, uint16_t desc_chain_head);
 	bool populateReceiveBuffers();
 
@@ -228,8 +205,9 @@ protected:
 	static void configChangeHandler(OSObject* target, VirtioDevice* source);
 
 	static void receiveQueueCompletion(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written);
+	void receiveQueueCompletion(virtio_net_packet* packet, bool device_reset, uint32_t num_bytes_written);
 	static void transmitQueueCompletion(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written);
-	void interruptAction(IOInterruptEventSource* source, int count);
+	static void debuggerTransmitCompletionAction(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written);
 	
 	void handleReceivedPacket(virtio_net_packet* packet);
 	void handleReceivedPackets();
@@ -256,9 +234,9 @@ protected:
 	
 	static const unsigned RECEIVE_QUEUE_INDEX = 0;
 	static const unsigned TRANSMIT_QUEUE_INDEX = 1;
-
-	virtio_net_virtqueue rx_queue;
-	virtio_net_virtqueue tx_queue;
+	
+	unsigned transmit_virtqueue_length;
+	unsigned receive_virtqueue_length;
 	
 	IOEthernetAddress mac_address;
 	/// Set to true once the mac address has been initialised
@@ -276,9 +254,11 @@ protected:
 	/// TSO for IPv4 has been negotiated
 	bool feature_tso_v4;
 	
+	/// non-NULL while the debugger is polling in receivePacket - receive completion will copy to this memory
+	void* debugger_receive_mem;
+	UInt32 debugger_receive_size;
 	
 	IOWorkLoop* work_loop;
-	IOFilterInterruptEventSource* intr_event_source;
 	
 	//IOMbufMemoryCursor* packet_memory_cursor;
 	
@@ -289,6 +269,8 @@ protected:
 	IOKernelDebugger* debugger;
 	/// A packet and associated mbuf reserved for transmitting packets supplied by the debugger
 	virtio_net_packet* debugger_transmit_packet;
+	bool debugger_transmit_packet_in_use;
+	
 	/// Linked list of packets to be freed
 	/** accumulated by the debugger dequeueing used tx packets */
 	struct virtio_net_packet* transmit_packets_to_free;

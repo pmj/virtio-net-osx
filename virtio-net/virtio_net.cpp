@@ -387,7 +387,29 @@ void PJVirtioNet::configChangeHandler(OSObject* target, VirtioDevice* source)
 void PJVirtioNet::receiveQueueCompletion(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written)
 {
 	PJVirtioNet* me = static_cast<PJVirtioNet*>(target);
-	me->handleReceivedPacket(static_cast<virtio_net_packet*>(ref));
+	me->receiveQueueCompletion(static_cast<virtio_net_packet*>(ref), device_reset, num_bytes_written);
+}
+
+void PJVirtioNet::receiveQueueCompletion(virtio_net_packet* packet, bool device_reset, uint32_t num_bytes_written)
+{
+	if (this->debugger_receive_mem != nullptr)
+	{
+		UInt32 copy_len = min(num_bytes_written - sizeof(virtio_net_hdr), this->debugger_receive_size);
+		errno_t e = mbuf_copydata(packet->mbuf, 0, copy_len, this->debugger_receive_mem);
+		if (e != 0)
+			this->debugger_receive_size = 0;
+		else
+			this->debugger_receive_size = copy_len;
+
+		// immediately re-queue into available ring
+		VirtioCompletion completion = { &receiveQueueCompletion, this, packet };
+		this->virtio_dev->submitBuffersToVirtqueue(RECEIVE_QUEUE_INDEX, nullptr, packet->dma_md, completion);
+		
+		return;
+	}
+	else
+	{
+		this->handleReceivedPacket(packet);
 			/*
 			IOLog("virtio-net interruptAction(): Populated receive buffers: %u free descriptors left, avail idx %u\n",
 				rx_queue.num_free_desc, rx_queue.avail->idx);
@@ -395,7 +417,8 @@ void PJVirtioNet::receiveQueueCompletion(OSObject* target, void* ref, bool devic
 	
 		
 		// Ensure there are plenty of receive buffers
-	me->populateReceiveBuffers();
+		this->populateReceiveBuffers();
+	}
 }
 		
 void PJVirtioNet::transmitQueueCompletion(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written)
@@ -485,6 +508,7 @@ bool PJVirtioNet::startWithIOEnabled()
 #ifdef PJ_VIRTIO_NET_VERBOSE
 	virtio_log_supported_features(dev_features);
 #endif
+	this->dev_feature_bitmap = dev_features;
 	
 	// We can use the notify-on-empty feature to permanently disable transmission interrupts
 	feature_notify_on_empty = (0 != (dev_features & VIRTIO_F_NOTIFY_ON_EMPTY));
@@ -692,7 +716,13 @@ bool PJVirtioNet::enablePartial()
 	}
 
 	// Re-initialise the device
-	uint32_t dev_features = this->virtio_dev->resetDevice();
+	if (!this->virtio_dev->resetDevice())
+	{
+		this->virtio_dev->close(this);
+		return false;
+	}
+	
+	uint32_t dev_features = this->virtio_dev->supportedFeatures();
 
 	// write back supported features
 	uint32_t supported_features = dev_features &
@@ -703,11 +733,13 @@ bool PJVirtioNet::enablePartial()
 		this->virtio_dev->close(this);
 		return false;
 	}
+	this->dev_feature_bitmap = supported_features;
 	PJLogVerbose("virtio-net enable(): Wrote driver-supported feature bits: 0x%08X\n", supported_features);
 
-	// Initialise the receive and transmit virtqueues
-	
-	IOReturn result = this->virtio_dev->setupVirtqueues(2);
+	// Initialise the receive and transmit virtqueues, both with interrupts disabled
+	bool interrupts_enabled[] = {false, false};
+	unsigned virtqueue_lengths[2] = {};
+	IOReturn result = this->virtio_dev->setupVirtqueues(2, interrupts_enabled, virtqueue_lengths);
 	if (result != kIOReturnSuccess)
 	{
 		IOLog("PJVirtioNet::enablePartial(): setting up virtqueues failed with error %x\n", result);
@@ -715,6 +747,8 @@ bool PJVirtioNet::enablePartial()
 		this->virtio_dev->close(this);
 		return false;
 	}
+	this->receive_virtqueue_length = virtqueue_lengths[RECEIVE_QUEUE_INDEX];
+	this->transmit_virtqueue_length = virtqueue_lengths[TRANSMIT_QUEUE_INDEX];
 	
 	// Don't support VIRTIO_NET_F_CTRL_VQ for now
 	
@@ -829,21 +863,19 @@ IOReturn PJVirtioNet::gatedEnableInterface(IONetworkInterface* interface)
 		return kIOReturnNoMemory;
 	}
 
-	// start handling interrupts now that the internal data structures are set up
-	if (!beginHandlingInterrupts())
-		return failDevice(), false;
-
 	// enable interrupts on the appropriate queues
-	rx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
+	this->virtio_dev->setVirtqueueInterruptsEnabled(RECEIVE_QUEUE_INDEX, true);
 	if (!feature_notify_on_empty)
-		tx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
-	OSSynchronizeIO();
+	{
+		// notify-on-empty not supported, so enable transmit interrupts as well
+		this->virtio_dev->setVirtqueueInterruptsEnabled(TRANSMIT_QUEUE_INDEX, true);
+	}
 	
 	// enable the output queue
 	IOOutputQueue* output_queue = getOutputQueue();
 	if (!output_queue)
-		return failDevice(), kIOReturnError;
-	uint32_t capacity = max(16, tx_queue.num / 4); // each packet takes 2 buffers, try to always fill up half the virtqueue, hence a quarter
+		return this->virtio_dev->failDevice(), kIOReturnError;
+	uint32_t capacity = max(16, this->transmit_virtqueue_length);
 	output_queue->setCapacity(capacity);
 	output_queue->start();
 	
@@ -854,19 +886,8 @@ IOReturn PJVirtioNet::gatedEnableInterface(IONetworkInterface* interface)
 	return kIOReturnSuccess;
 }
 
-void PJVirtioNet::clearVirtqueuePackets(virtio_net_virtqueue& queue)
+void PJVirtioNet::freeVirtioPacket(virtio_net_packet* packet)
 {
-	if (!queue.packets_for_descs)
-		return;
-	for (uint16_t i = 0; i < queue.num; ++i)
-	{
-		virtio_net_packet* packet = queue.packets_for_descs[i];
-		if (!packet || packet == debugger_transmit_packet)
-			continue;
-
-		if (packet->dma_cmd)
-			packet->dma_cmd->clearMemoryDescriptor();
-		OSSafeReleaseNULL(packet->dma_cmd);
 		OSSafeReleaseNULL(packet->dma_md);
 		OSSafeReleaseNULL(packet->mbuf_md);
 		if (packet->mbuf)
@@ -874,15 +895,12 @@ void PJVirtioNet::clearVirtqueuePackets(virtio_net_virtqueue& queue)
 			freePacket(packet->mbuf);
 			packet->mbuf = NULL;
 		}
-		PJLogVerbose("clearVirtqueuePackets (queue %p): Freeing packet buffer %p (%llu bytes) - descriptor %p\n", &queue, packet, packet->mem ? packet->mem->getLength() : 0, packet->mem);
+		PJLogVerbose("freeVirtioPacket (%p): Freeing packet buffer %p (%llu bytes) - descriptor %p\n", packet, packet, packet->mem ? packet->mem->getLength() : 0, packet->mem);
 		IOBufferMemoryDescriptor* md = packet->mem;
 		
 		memset(packet, 0, sizeof(*packet));
 		if (md)
 			md->release();
-		
-		queue.packets_for_descs[i] = NULL;
-	}
 }
 
 IOReturn PJVirtioNet::disable(IOKernelDebugger *debugger)
@@ -927,12 +945,8 @@ IOReturn PJVirtioNet::disable(IONetworkInterface* interface)
 	}
 	
 	// disable interrupts again
-	rx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
-	if (!feature_notify_on_empty)
-		tx_queue.avail->flags |= VRING_AVAIL_F_NO_INTERRUPT;
-
-	// interrupts not needed for debugger-only operation
-	endHandlingInterrupts();
+	this->virtio_dev->setVirtqueueInterruptsEnabled(RECEIVE_QUEUE_INDEX, false);
+	this->virtio_dev->setVirtqueueInterruptsEnabled(TRANSMIT_QUEUE_INDEX, false);
 
 	if (driver_state == kDriverStateEnabledBoth)
 	{
@@ -955,22 +969,13 @@ void PJVirtioNet::disablePartial()
 	releaseSentPackets();
 
 	// disable the device to stop any more interrupts from occurring
-	virtioResetDevice();
+	this->virtio_dev->failDevice();
 
-	// free any remaining packet resources
-	clearVirtqueuePackets(rx_queue);
-	clearVirtqueuePackets(tx_queue);
-
-	// unmap and close device
-	OSSafeReleaseNULL(this->pci_virtio_header_iomap);
-	pci_dev->close(this);
+	// close device
+	this->virtio_dev->close(this);
 	
 	// Free any pooled packet headers
 	flushPacketPool();
-
-	// Deallocate virtqueue resources and reset descriptors
-	virtqueue_free(rx_queue);
-	virtqueue_free(tx_queue);
 	
 	driver_state = kDriverStateStarted;
 	PJLogVerbose("virtio-net disablePartial() done\n");
@@ -982,29 +987,15 @@ UInt32 PJVirtioNet::outputPacket(mbuf_t buffer, void *param)
 	// try to clear any completed packets from the queue
 	runInCommandGate<bool, &PJVirtioNet::releaseSentPackets>(false);
 
-	if (tx_queue.num_free_desc < 3)
-	{
-		//IOLog("virtio-net outputPacket(): Transmit queue really full, pipeline stalled.\n");
-		// activate interrupt for when a packet is sent if we're currently only being notified when empty
-		if (feature_notify_on_empty)
-		{
-			tx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
-			OSSynchronizeIO();
-		}
-		was_stalled = true;
-		return kIOReturnOutputStall;
-	}
-			
-	uint16_t avail_idx = tx_queue.avail->idx;
-	IOReturn add_ret = addPacketToQueue(buffer, tx_queue, false /* packet to be read by device */, avail_idx);
+	IOReturn add_ret = addPacketToTransmitQueue(buffer);
 	if (add_ret != kIOReturnSuccess)
 	{
 		if (add_ret == kIOReturnOutputStall)
 		{
 			if (feature_notify_on_empty)
 			{
-				tx_queue.avail->flags &= ~VRING_AVAIL_F_NO_INTERRUPT;
-				OSSynchronizeIO();
+				// request immedate notification for available resources on transmit queue (if notify_on_empty feature is off, interrupts should already be enabled)
+				this->virtio_dev->setVirtqueueInterruptsEnabled(TRANSMIT_QUEUE_INDEX, true);
 			}
 			was_stalled = true;
 			return kIOReturnOutputStall;
@@ -1013,7 +1004,6 @@ UInt32 PJVirtioNet::outputPacket(mbuf_t buffer, void *param)
 		freePacket(buffer);
 		return kIOReturnOutputDropped;
 	}
-	notifyQueueAvailIdx(tx_queue, avail_idx);
 	return kIOReturnOutputSuccess;
 }
 	
@@ -1024,50 +1014,32 @@ void PJVirtioNet::receivePacket(void *pkt, UInt32 *pktSize, UInt32 timeout)
 	uint64_t waited = 0;
 	
 	//kprintf("virtio-net receivePacket(): Willing to wait %lu ms\n", timeout);
+	this->debugger_receive_mem = pkt;
+	this->debugger_receive_size = *pktSize;
 
 	while (true)
 	{
 		// check for packets in the rx queue
-		uint16_t last_used = rx_queue.last_used_idx;
-		for (uint16_t used_idx = last_used; used_idx != rx_queue.used->idx; ++used_idx)
+		unsigned handled_requests = this->virtio_dev->pollCompletedRequestsInVirtqueue(RECEIVE_QUEUE_INDEX, 1 /* only handle 1 packet for now */);
+		if (handled_requests > 0)
 		{
-			vring_used_elem& used = rx_queue.used->ring[used_idx % rx_queue.num];
-			uint16_t desc = used.id;
-			if (desc == UINT16_MAX || desc >= rx_queue.num || used.len < sizeof(virtio_net_hdr))
-				continue;
-			
-			virtio_net_packet* packet = rx_queue.packets_for_descs[desc];
-			if (!packet)
-			{
-				kprintf("virtio-net receivePacket(): Warning! No packet for descriptor %u, skipping.\n", desc);
-				continue;
-			}
-			
-			rx_queue.last_used_idx = used_idx + 1;
-			
-			uint32_t len = *pktSize = static_cast<uint32_t>(used.len - sizeof(virtio_net_hdr));
-			//kprintf("virtio-net receivePacket(): Copying received debugger packet (length %u).\n", len);
-			memcpy(pkt, mbuf_data(packet->mbuf), len);
-			used.id = UINT16_MAX;
-			used.len = 0;
-
-			// immediately re-queue into available ring
-			uint16_t avail_idx = rx_queue.avail->idx;
-			rx_queue.avail->ring[avail_idx % rx_queue.num] = desc;
-			++avail_idx;
-			notifyQueueAvailIdx(rx_queue, avail_idx);
-			return;
+			*pktSize = this->debugger_receive_size;
+			break;
 		}
-		
+
 		if (waited >= timeout_us)
 		{
 			//kprintf("virtio-net receivePacket(): out of time\n");
+			*pktSize = 0;
 			break;
 		}
 		
 		IODelay(20);
 		waited += 20;
 	}
+
+	this->debugger_receive_mem = nullptr;
+	this->debugger_receive_size = 0;
 }
 
 static void vring_push_free_desc(virtio_net_virtqueue& queue, uint16_t free_idx);
@@ -1096,18 +1068,19 @@ void PJVirtioNet::sendPacket(void *pkt, UInt32 pktSize)
 		kprintf("virtio-net sendPacket(): Driver not ready, aborting.\n");
 		return;
 	}
-	int32_t head_desc = vring_pop_free_desc(tx_queue);
-	int32_t main_desc = vring_pop_free_desc(tx_queue);
-	if (main_desc < 0)
+	
+	if (this->debugger_transmit_packet_in_use)
 	{
-		if (head_desc >= 0)
-			vring_push_free_desc(tx_queue, head_desc);
-		kprintf("virtio-net sendPacket(): No free virtqueue descriptors.\n");
-		return;
+		this->virtio_dev->pollCompletedRequestsInVirtqueue(TRANSMIT_QUEUE_INDEX);
+		if (this->debugger_transmit_packet_in_use)
+		{
+			// previous packet hasn't sent yet
+			return;
+		}
 	}
 	
-	virtio_net_packet* packet = debugger_transmit_packet;
-	memcpy(mbuf_data(packet->mbuf), pkt, pktSize);
+	virtio_net_packet* packet = this->debugger_transmit_packet;
+	mbuf_copyback(packet->mbuf, 0, pktSize, pkt, MBUF_DONTWAIT);
 
 	packet->header.flags = 0;
 	packet->header.gso_type = VIRTIO_NET_HDR_GSO_NONE;
@@ -1116,159 +1089,40 @@ void PJVirtioNet::sendPacket(void *pkt, UInt32 pktSize)
 	packet->header.csum_start = 0;
 	packet->header.csum_offset = 0;
 	
-	// fill out descriptors
-	tx_queue.desc[head_desc].addr = packet->mem->getPhysicalSegment(0, NULL, 0);
-	tx_queue.desc[head_desc].len = sizeof(packet->header);
-	tx_queue.desc[head_desc].flags = VRING_DESC_F_NEXT;
-	tx_queue.desc[head_desc].next = main_desc;
-	tx_queue.desc[main_desc].addr = mbuf_data_to_physical(mbuf_data(packet->mbuf));
-	tx_queue.desc[main_desc].len = pktSize;
-	tx_queue.desc[main_desc].flags = 0;
-	tx_queue.desc[main_desc].next = UINT16_MAX;
+	packet->mbuf_md->initWithMbuf(packet->mbuf, kIODirectionOut);
 	
-	uint16_t last_used_idx = tx_queue.used->idx;
-	tx_queue.packets_for_descs[head_desc] = debugger_transmit_packet;
-	uint16_t avail_idx = tx_queue.avail->idx;
-	tx_queue.avail->ring[avail_idx % tx_queue.num] = head_desc;
-	/*kprintf("virtio-net sendPacket(): Adding packet to tx queue in descriptors %u and %u, available index %u.\n",
-		head_desc, main_desc, avail_idx);*/
-	tx_queue.avail->idx = ++avail_idx;
-	notifyQueueAvailIdx(tx_queue, avail_idx);
+	packet->dma_md_subranges[0].md = packet->mem;
+	packet->dma_md_subranges[0].offset = 0;
+	packet->dma_md_subranges[0].length = sizeof(virtio_net_hdr);
 	
-	unsigned wait_us = 1;
-	while (true)
+	packet->dma_md_subranges[1].md = packet->mbuf_md;
+	packet->dma_md_subranges[1].offset = 0;
+	packet->dma_md_subranges[1].length = pktSize;
+	
+	packet->dma_md->initWithDescriptorRanges(packet->dma_md_subranges, 2, kIODirectionOut, false /* don't copy subranges */);
+	
+	VirtioCompletion completion = { &debuggerTransmitCompletionAction, this, packet };
+	this->debugger_transmit_packet_in_use = true;
+	IOReturn res = this->virtio_dev->submitBuffersToVirtqueue(TRANSMIT_QUEUE_INDEX, packet->dma_md, nullptr, completion);
+	if (res != kIOReturnSuccess)
 	{
-		// this means no other thread/interrupt has detected the packet as sent, so let's keep polling it ourselves
-		if (last_used_idx != tx_queue.used->idx)
-		{
-			vring_used_elem& used = tx_queue.used->ring[last_used_idx % tx_queue.num];
-			if (used.id == head_desc)
-			{
-				// this is the packet we just sent!
-				used.id = UINT16_MAX;
-				used.len = 0;
-				//kprintf("virtio-net sendPacket(): Debugger packet was found in used tx ring at index %u, finishing up.\n", last_used_idx);
-				freeDescriptorChain(tx_queue, head_desc);
-				break;
-			}
-		}
-		IODelay(wait_us);
-		if (wait_us < 10000)
-			++wait_us;
-		OSSynchronizeIO();
+		kprintf("Failed to submit debugger packet to virtqueue: returned %x\n", res);
+		packet->dma_md->initWithDescriptorRanges(nullptr, 0, kIODirectionNone, false);
+		packet->mbuf_md->initWithMbuf(nullptr, kIODirectionNone);
+		this->debugger_transmit_packet_in_use = false;
 	}
-	
-	//kprintf("virtio-net sendPacket(): done, disposing of any other packets in the queue.\n");
-	releaseSentPackets(true);
 }
 
-static int32_t vring_pop_free_desc(virtio_net_virtqueue& queue)
+void PJVirtioNet::debuggerTransmitCompletionAction(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written)
 {
-	if (queue.num_free_desc < 1)
-		return -1;
-	uint16_t free_idx = queue.free_desc_head;
-	queue.free_desc_head = queue.desc[free_idx].next;
-	--queue.num_free_desc;
-	return free_idx;
+	PJVirtioNet* me = static_cast<PJVirtioNet*>(target);
+	assert(me->debugger_transmit_packet == ref);
+	virtio_net_packet* packet = static_cast<virtio_net_packet*>(ref);
+	packet->dma_md->initWithDescriptorRanges(nullptr, 0, kIODirectionNone, false);
+	packet->mbuf_md->initWithMbuf(nullptr, kIODirectionNone);
+	me->debugger_transmit_packet_in_use = false;
 }
 
-static void vring_push_free_desc(virtio_net_virtqueue& queue, uint16_t free_idx)
-{
-	assert(free_idx < queue.num);
-	queue.desc[free_idx].next = queue.free_desc_head;
-	queue.desc[free_idx].flags = queue.num_free_desc > 0 ? VRING_DESC_F_NEXT : 0;
-	queue.packets_for_descs[free_idx] = NULL;
-	queue.free_desc_head = free_idx;
-	++queue.num_free_desc;
-}
-
-bool PJVirtioNet::notifyQueueAvailIdx(virtio_net_virtqueue& queue, uint16_t new_avail_idx)
-{
-	OSSynchronizeIO();
-	queue.avail->idx = new_avail_idx;
-	OSSynchronizeIO();
-	if (0 == (queue.used->flags & VRING_USED_F_NO_NOTIFY))
-	{
-		virtioHeaderWrite16(VIRTIO_PCI_CONF_OFFSET_QUEUE_NOTIFY, queue.index);
-		return true;
-	}
-	return false;
-}
-
-/// Structure for tracking the progress of turning a packet into virtqueue buffers across outputPacketSegment() calls
-struct virtio_net_cursor_segment_context
-{
-	PJVirtioNet* me;
-	
-	virtio_net_virtqueue& queue;
-	/// Array of descriptor indices in the chain
-	int32_t* descs;
-	/// Number of elements in the descs array
-	unsigned max_num_descs;
-	/// Index of the highest filled segment
-	int32_t max_segment_created;
-	/// Bits to OR into the buffer's "flags" field to indicate reading or writing
-	uint16_t buffer_direction_flag;
-	
-	uint32_t total_len;
-	
-	/// A problem has occurred, further outputPacketSegment() calls will not do anything except increment the segment counter
-	bool error;
-	/// The error was that descriptor allocation failed
-	bool out_of_descriptors;
-	
-	unsigned descs_allocd;
-};
-bool PJVirtioNet::outputPacketSegment(IODMACommand* target, IODMACommand::Segment64 segment, void* segment_context, UInt32 segmentIndex)
-{
-	//IOLog("virtio-net outputPacketSegment(): segment %lu at 0x%08lX, length %lu.\n", segmentIndex, segment.location, segment.length);
-	virtio_net_cursor_segment_context* ctx = static_cast<virtio_net_cursor_segment_context*>(segment_context);
-	if (ctx->error)
-		return false;
-	
-	if (segmentIndex >= ctx->max_num_descs)
-	{
-		ctx->error = true;
-		return false;
-	}
-	
-	if (segment.fLength < 1)
-		VIOLog("virtio-net outputPacketSegment(): Zero length segment!\n");
-	
-	int32_t desc = ctx->descs[segmentIndex];
-	if (desc < 0)
-	{
-		desc = vring_pop_free_desc(ctx->queue);
-		++ctx->descs_allocd;
-	}
-	else
-	{
-		ctx->total_len -= ctx->queue.desc[desc].len;
-	}
-	/*else
-		IOLog("virtio-net outputPacketSegment(): Note: rewriting descriptor %u! Prev addr: %llu len: %u, now addr: %lu, len: %lu\n",
-			desc, ctx->queue.desc[desc].addr, ctx->queue.desc[desc].len, segment.location, segment.length);
-	*/
-	if (desc < 0)
-	{
-		--ctx->descs_allocd;
-		VIOLog("virtio-net outputPacketSegment(): failed to allocate descriptor.\n");
-		ctx->error = ctx->out_of_descriptors = true;
-		return false;
-	}
-
-	ctx->descs[segmentIndex] = desc;
-	vring_desc& buf = ctx->queue.desc[desc];
-	buf.addr = segment.fIOVMAddr;
-	buf.len = static_cast<uint32_t>(segment.fLength);
-	ctx->total_len += buf.len;
-	buf.flags = ctx->buffer_direction_flag;
-	buf.next = UINT16_MAX;
-	if ((int32_t)segmentIndex > ctx->max_segment_created)
-		ctx->max_segment_created = segmentIndex;
-	//IOLog("virtio-net outputPacketSegment(): Added segment as buffer in descriptor %u, total packet length so far: %u.\n", desc, ctx->total_length);
-	return true;
-}
 
 virtio_net_packet* PJVirtioNet::allocPacket()
 {
@@ -1288,16 +1142,9 @@ virtio_net_packet* PJVirtioNet::allocPacket()
 			return NULL;
 		virtio_net_packet* packet = static_cast<virtio_net_packet*>(packet_mem->getBytesNoCopy());
 		packet->mem = packet_mem;
-		packet->dma_cmd = IODMACommand::withSpecification(outputPacketSegment, 64, 0);
-		if (!packet->dma_cmd)
-		{
-			packet_mem->release();
-			return NULL;
-		}
 		packet->dma_md = SSDCMultiSubrangeMemoryDescriptor::withDescriptorRanges(NULL, 0, kIODirectionNone, false);
 		if (!packet->dma_md)
 		{
-			packet->dma_cmd->release();
 			packet_mem->release();
 			return NULL;
 		}
@@ -1306,7 +1153,6 @@ virtio_net_packet* PJVirtioNet::allocPacket()
 		if (!packet->mbuf_md)
 		{
 			packet->dma_md->release();
-			packet->dma_cmd->release();
 			packet_mem->release();
 			return NULL;
 		}
@@ -1372,12 +1218,8 @@ static void virtio_net_enable_tcp_csum(virtio_net_packet* packet, bool need_part
  * kIOReturnSuccess if everything went well, kIOReturnNoMemory if alloc failed,
  * and kIOReturnError if something else went wrong.
  */
-IOReturn PJVirtioNet::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue& queue, bool for_writing, uint16_t& at_avail_idx)
+IOReturn PJVirtioNet::addPacketToTransmitQueue(mbuf_t packet_mbuf)
 {
-	// check if there are going to be enough descriptors around
-	if (queue.num_free_desc < 2)
-		return kIOReturnOutputStall;
-
 	// when transmitting, we may want to request specific "hardware" features
 	bool requested_tcp_csum = false;
 	bool requested_tsov4 = false;
@@ -1385,7 +1227,7 @@ IOReturn PJVirtioNet::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue&
 	mbuf_csum_request_flags_t tso_req = 0;
 	uint32_t tso_val = 0;
 
-	if (!for_writing && feature_checksum_offload)
+	if (feature_checksum_offload)
 	{
 		// deal with any checksum offloading requests
 		UInt32 demand_mask = 0;
@@ -1439,13 +1281,11 @@ IOReturn PJVirtioNet::addPacketToQueue(mbuf_t packet_mbuf, virtio_net_virtqueue&
 			}
 		}
 	}
+	return addPacketToQueue(packet_mbuf, TRANSMIT_QUEUE_INDEX, false /* device is not writing */);
+}
 
-	// compact small packets more if descriptors are getting scarce
-	uint32_t max_segs = queue.num_free_desc; // add 1 for the virtio net header
-	
-	if (max_segs < 2)
-		return kIOReturnOutputStall;
-
+IOReturn PJVirtioNet::addPacketToQueue(mbuf_t packet_mbuf, unsigned queue_index, bool for_writing)
+{
 	// recycle or allocate memory for the packet virtio header buffer
 	virtio_net_packet* packet = allocPacket();
 	if (!packet)
