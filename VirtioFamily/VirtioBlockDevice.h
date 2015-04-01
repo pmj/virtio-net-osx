@@ -34,6 +34,8 @@ protected:
 	uint32_t active_features;
 	uint64_t capacity_in_bytes;
 	uint32_t sectors_per_block;
+	uint32_t max_request_segments;
+	
 	VirtioBlockDeviceRequest* requestFromPool();
 	void returnRequestToPool(VirtioBlockDeviceRequest* request);
 	
@@ -53,6 +55,8 @@ public:
 	virtual void deviceConfigChangeAction(VirtioDevice* source);
 	virtual void endDeviceOperation();
     virtual bool didTerminate(IOService* provider, IOOptionBits options, bool* defer ) override;
+	
+	virtual bool handleOpen(IOService* forClient, IOOptionBits options, void* arg) override;
 
 	virtual IOReturn doEjectMedia(void) override;
 	virtual IOReturn doFormatMedia(UInt64 byteCapacity) override;

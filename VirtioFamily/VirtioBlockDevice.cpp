@@ -12,6 +12,8 @@
 #include <IOKit/IOCommandGate.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#include <IOKit/IOKitKeys.h>
+#include <IOKit/storage/IOBlockStorageDriver.h>
 
 OSDefineMetaClassAndStructors(VirtioBlockDevice, IOBlockStorageDevice);
 
@@ -157,6 +159,8 @@ bool VirtioBlockDevice::start(IOService* provider)
 		return false;
 	}
 	
+	this->max_request_segments = queue_size - 2;
+	
 	IOWorkLoop* work_loop = this->getWorkLoop();
 	this->command_gate = IOCommandGate::commandGate(this);
 	this->command_gate->setWorkLoop(work_loop);
@@ -178,8 +182,15 @@ bool VirtioBlockDevice::start(IOService* provider)
 			
 			uint64_t capacity = me->virtio_device->readDeviceSpecificConfig64LE(CONFIG_CAPCITY_OFFSET);
 			me->capacity_in_bytes = capacity*512;
+			
+			uint32_t seg_max = 0;
+			if (me->active_features & VirtioBlockDeviceFeatures::VIRTIO_BLK_F_SEG_MAX)
+			{
+				seg_max = me->virtio_device->readDeviceSpecificConfig32LE(CONFIG_SEG_MAX_OFFSET);
+				if (seg_max < me->max_request_segments)
+					me->max_request_segments = seg_max;
+			}
 			uint32_t size_max = me->virtio_device->readDeviceSpecificConfig32LE(CONFIG_SIZE_MAX_OFFSET);
-			uint32_t seg_max = me->virtio_device->readDeviceSpecificConfig32LE(CONFIG_SEG_MAX_OFFSET);
 			uint32_t block_size = 512;
 			if(me->active_features & VirtioBlockDeviceFeatures::VIRTIO_BLK_F_BLK_SIZE)
 			{
@@ -197,6 +208,22 @@ bool VirtioBlockDevice::start(IOService* provider)
 	return true;
 
 }
+
+bool VirtioBlockDevice::handleOpen(IOService* forClient, IOOptionBits options, void* arg)
+{
+	bool ok = IOBlockStorageDevice::handleOpen(forClient, options, arg);
+	if (ok)
+	{
+		IOBlockStorageDriver* client_driver = OSDynamicCast(IOBlockStorageDriver, forClient);
+		if (client_driver != nullptr)
+		{
+			client_driver->setProperty(kIOMaximumSegmentCountReadKey, this->max_request_segments, 32);
+			client_driver->setProperty(kIOMaximumSegmentCountWriteKey, this->max_request_segments, 32);
+		}
+	}
+	return ok;
+}
+
 
 void VirtioBlockDevice::deviceConfigChangeAction(OSObject* target, VirtioDevice* source)
 {
