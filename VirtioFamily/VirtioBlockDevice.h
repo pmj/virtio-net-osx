@@ -35,6 +35,7 @@ protected:
 	uint64_t capacity_in_bytes;
 	uint32_t sectors_per_block;
 	uint32_t max_request_segments;
+	unsigned max_concurrent_requests;
 	
 	VirtioBlockDeviceRequest* requestFromPool();
 	void returnRequestToPool(VirtioBlockDeviceRequest* request);
@@ -48,6 +49,9 @@ protected:
 	static IOReturn doAsyncReadWriteOnWorkLoop(OSObject* block_dev, void* arg0, void* arg1, void* arg2, void* arg3);
 	IOReturn doAsyncReadWriteOnWorkLoop(IOMemoryDescriptor* buffer, UInt64 block, UInt64 nblks, IOStorageAttributes* attributes, IOStorageCompletion* completion);
 	
+	static IOReturn doSynchronizeCacheOnWorkLoop(OSObject* block_dev, void* arg0, void* arg1, void* arg2, void* arg3);
+	IOReturn doSynchronizeCacheOnWorkLoop();
+	void handlePendingRequests(bool device_reset);
 public:
 	virtual bool start(IOService* provider) override;
 	virtual void stop(IOService* provider) override;
@@ -81,6 +85,8 @@ public:
 	
 	static void blockRequestCompleted(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written);
 	virtual void blockRequestCompleted(VirtioBlockDeviceRequest* request, bool device_reset);
+	static void flushRequestCompleted(OSObject* target, void* ref, bool device_reset, uint32_t num_bytes_written);
+	virtual void flushRequestCompleted(VirtioBlockDeviceRequest* request, bool device_reset);
 
 #ifdef VIRTIO_LOG_TERMINATION
 	virtual bool requestTerminate( IOBlockStorageDevice * provider, IOOptionBits options ) override;

@@ -108,5 +108,7 @@
 		<key>com.apple.iokit.IOStorageFamily</key>
 		<string>1.0</string>
 	</dict>
+	<key>OSBundleRequired</key>
+	<string>Root</string>
 </dict>
 </plist>
