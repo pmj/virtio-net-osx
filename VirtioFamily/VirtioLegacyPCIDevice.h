@@ -46,7 +46,7 @@ public:
 	virtual uint32_t supportedFeatures() override;
 	virtual bool requestFeatures(uint32_t use_features) override;
 	virtual void failDevice() override;
-	virtual IOReturn setupVirtqueues(unsigned number_queues, const bool queue_interrupts_enabled[] = nullptr, unsigned out_queue_sizes[] = nullptr) override;
+	virtual IOReturn setupVirtqueues(unsigned number_queues, const bool queue_interrupts_enabled[] = nullptr, unsigned out_queue_sizes[] = nullptr, const unsigned indirect_desc_per_request[] = nullptr) override;
 	virtual IOReturn setVirtqueueInterruptsEnabled(unsigned queue_id, bool enabled) override;
 	virtual void startDevice(ConfigChangeAction action = nullptr, OSObject* target = nullptr) override;
 	
@@ -80,11 +80,20 @@ public:
 
 
 private:
-	IOReturn setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, unsigned queue_id, bool interrupts_enabled);
+	IOReturn setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, unsigned queue_id, bool interrupts_enabled, unsigned indirect_desc_per_request);
+	
+	
 	bool mapHeaderIORegion();
 	
 	static bool outputVringDescSegment(
 		IODMACommand* target, IODMACommand::Segment64 segment, void* segments, UInt32 segmentIndex);
+	static bool outputVringDescSegmentForIndirectTable(
+		IODMACommand* target, IODMACommand::Segment64 segment, void* segments, UInt32 segmentIndex);
+	static bool outputIndirectVringDescSegment(
+		IODMACommand* target, IODMACommand::Segment64 segment, void* segments, UInt32 segmentIndex);
+
+	IOReturn submitBuffersToVirtqueueDirect(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion);
+	IOReturn submitBuffersToVirtqueueIndirect(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion);
 
 };
 

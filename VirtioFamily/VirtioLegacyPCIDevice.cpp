@@ -266,7 +266,7 @@ static inline unsigned vring_mem_size(unsigned qsz)
 		+ virtio_page_align(sizeof(VirtioVringUsedElement) * qsz);
 }
 
-IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, unsigned queue_id, bool interrupts_enabled)
+IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, unsigned queue_id, bool interrupts_enabled, unsigned indirect_desc_per_request)
 {
 	// write queue selector
 	this->pci_device->ioWrite16(VirtioLegacyHeaderOffset::QUEUE_SELECT, queue_id, this->pci_virtio_header_iomap);
@@ -332,6 +332,10 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, 
 		return result;
 	}
 	
+	bool use_indirect =
+		((this->active_features & VirtioDeviceGenericFeature::VIRTIO_F_RING_INDIRECT_DESC) && indirect_desc_per_request > 0);
+	queue->queue.indirect_descriptors = use_indirect;
+	
 	// allocate array of VirtioBuffers for descriptor_array
 	const size_t desc_buffer_array_size = sizeof(queue->queue.descriptor_buffers[0]) * num_queue_entries;
 	VirtioBuffer* descriptor_buffers = static_cast<VirtioBuffer*>(
@@ -339,9 +343,48 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, 
 	memset(descriptor_buffers, 0, desc_buffer_array_size);
 	for (unsigned i = 0; i < num_queue_entries; i++)
 	{
-		IODMACommand* buffer_dma = descriptor_buffers[i].dma_cmd = IODMACommand::withSpecification(
-			outputVringDescSegment, 64, UINT32_MAX, IODMACommand::kMapped, UINT32_MAX);
-		if (buffer_dma == nullptr)
+		bool ok = true;
+
+		if(use_indirect)
+		{
+			IOBufferMemoryDescriptor* indirect_descriptors = IOBufferMemoryDescriptor::inTaskWithOptions(
+				kernel_task, kIODirectionOut | kIOMemoryPhysicallyContiguous, indirect_desc_per_request * sizeof(VirtioVringDesc), alignof(VirtioVringDesc));
+			IODMACommand* dma_indirect_descriptors = descriptor_buffers[i].dma_cmd = IODMACommand::withSpecification(
+				outputVringDescSegmentForIndirectTable, 64, UINT32_MAX, IODMACommand::kMapped, UINT32_MAX);
+			IODMACommand* buffer_dma = descriptor_buffers[i].dma_cmd = IODMACommand::withSpecification(
+				outputIndirectVringDescSegment, 64, UINT32_MAX, IODMACommand::kMapped, UINT32_MAX);
+			IODMACommand* dma_cmd_2 = descriptor_buffers[i].dma_cmd = IODMACommand::withSpecification(
+				outputIndirectVringDescSegment, 64, UINT32_MAX, IODMACommand::kMapped, UINT32_MAX);
+			
+			if (buffer_dma && dma_cmd_2 && dma_indirect_descriptors && indirect_descriptors)
+			{
+				descriptor_buffers[i].dma_cmd = buffer_dma;
+				descriptor_buffers[i].dma_cmd_2 = dma_cmd_2;
+				descriptor_buffers[i].dma_indirect_descriptors = dma_indirect_descriptors;
+				descriptor_buffers[i].indirect_descriptors = indirect_descriptors;
+			}
+			else
+			{
+				ok = false;
+				OSSafeReleaseNULL(buffer_dma);
+				OSSafeReleaseNULL(dma_cmd_2);
+				OSSafeReleaseNULL(dma_indirect_descriptors);
+				OSSafeReleaseNULL(indirect_descriptors);
+			}
+		}
+		else
+		{
+			IODMACommand* buffer_dma = descriptor_buffers[i].dma_cmd = IODMACommand::withSpecification(
+				outputVringDescSegment, 64, UINT32_MAX, IODMACommand::kMapped, UINT32_MAX);
+			descriptor_buffers[i].dma_cmd = buffer_dma;
+			descriptor_buffers[i].dma_cmd_2 = nullptr;
+			descriptor_buffers[i].dma_indirect_descriptors = nullptr;
+			descriptor_buffers[i].indirect_descriptors = nullptr;
+			
+			ok = buffer_dma != nullptr;
+		}
+
+		if (!ok)
 		{
 			for (unsigned j = 0; j < i; ++j)
 			{
@@ -352,7 +395,6 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, 
 			IOFreeAligned(descriptor_buffers, desc_buffer_array_size);
 			return kIOReturnNoMemory;
 		}
-		descriptor_buffers[i].dma_cmd = buffer_dma;
 	}
 	
 	queue->queue_mem = queue_mem;
@@ -409,6 +451,9 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, 
 	
 	queue->queue.num_entries = num_queue_entries;
 	queue->queue.descriptor_buffers = descriptor_buffers;
+	
+	
+	
 	return kIOReturnSuccess;
 }
 
@@ -443,7 +488,7 @@ static void destroy_virtqueue(VirtioLegacyPCIVirtqueue* queue)
 	OSSafeReleaseNULL(queue->queue_mem);
 }
 
-IOReturn VirtioLegacyPCIDevice::setupVirtqueues(unsigned number_queues, const bool queue_interrupts_enabled[], unsigned out_queue_sizes[])
+IOReturn VirtioLegacyPCIDevice::setupVirtqueues(unsigned number_queues, const bool queue_interrupts_enabled[], unsigned out_queue_sizes[], const unsigned indirect_desc_per_request[])
 {
 	const size_t queue_array_size = sizeof(this->virtqueues[0]) * number_queues;
 	VirtioLegacyPCIVirtqueue* queues = static_cast<VirtioLegacyPCIVirtqueue*>(
@@ -455,7 +500,7 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueues(unsigned number_queues, const bo
 	IOReturn result = kIOReturnSuccess;
 	for (unsigned i = 0; i < number_queues; ++i)
 	{
-		result = this->setupVirtqueue(&queues[i], i, queue_interrupts_enabled ? queue_interrupts_enabled[i] : true);
+		result = this->setupVirtqueue(&queues[i], i, queue_interrupts_enabled ? queue_interrupts_enabled[i] : true, indirect_desc_per_request ? indirect_desc_per_request[i] : 0);
 		
 		if (result != kIOReturnSuccess)
 		{
@@ -596,6 +641,22 @@ IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueue(unsigned queue_index, I
 	{
 		return kIOReturnBadArgument;
 	}
+	
+	VirtioVirtqueue* queue = &this->virtqueues[queue_index].queue;
+	if (queue->indirect_descriptors)
+	{
+		return this->submitBuffersToVirtqueueIndirect(queue_index, device_readable_buf, device_writable_buf, completion);
+	}
+	else
+	{
+		return this->submitBuffersToVirtqueueDirect(queue_index, device_readable_buf, device_writable_buf, completion);
+	}
+}
+
+static void virtio_virtqueue_add_descriptor_to_ring(VirtioVirtqueue* queue, uint16_t first_descriptor_index);
+
+IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueueDirect(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion)
+{
 	VirtioVirtqueue* queue = &this->virtqueues[queue_index].queue;
 	
 	uint16_t first_descriptor_index = UINT16_MAX;
@@ -735,6 +796,18 @@ IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueue(unsigned queue_index, I
 		
 	}
 	
+	virtio_virtqueue_add_descriptor_to_ring(queue, first_descriptor_index);
+	
+	if((queue->used_ring->flags & VirtioVringUsedFlag::NO_NOTIFY)==0)
+	{
+		pci_device->ioWrite16(VirtioLegacyHeaderOffset::QUEUE_NOTIFY, queue_index, this->pci_virtio_header_iomap);
+	}
+
+	return kIOReturnSuccess;
+}
+
+static void virtio_virtqueue_add_descriptor_to_ring(VirtioVirtqueue* queue, uint16_t first_descriptor_index)
+{
 	// add index of first descriptor in chain to 'available' ring
 	
 	uint16_t avail_pos = queue->available_ring->head_index;
@@ -743,12 +816,162 @@ IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueue(unsigned queue_index, I
 	OSSynchronizeIO();
 	queue->available_ring->head_index = avail_pos;
 	OSSynchronizeIO();
+}
+
+struct virtio_output_indirect_segment_state
+{
+	VirtioVringDesc* desc_array;
+	unsigned next_descriptor_index;
+	bool writable;
+};
+struct virtio_output_segment_for_indirect_descs_state
+{
+	VirtioVirtqueue* queue;
+	int16_t main_descriptor_index;
+};
+
+static IOReturn generate_indirect_segment_dma(VirtioVirtqueue* queue, IODMACommand* dma_cmd, IOMemoryDescriptor* buf, unsigned& min_descs_required, UInt32& max_segments, virtio_output_indirect_segment_state* desc_output);
+
+IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueueIndirect(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion)
+{
+	VirtioVirtqueue* queue = &this->virtqueues[queue_index].queue;
+	
+	int16_t main_descriptor_index = reserveNewDescriptor(queue);
+	if (main_descriptor_index < 0)
+		return kIOReturnBusy;
+	
+	const bool device_readable_descs = (device_readable_buf != nullptr && device_readable_buf->getLength() != 0);
+	const bool device_writable_descs = (device_writable_buf != nullptr && device_writable_buf->getLength() != 0);
+	unsigned min_descs_required = (device_readable_descs ? 1 : 0) + (device_writable_descs ? 1 : 0);
+	
+	VirtioBuffer* desc_buffer = &queue->descriptor_buffers[main_descriptor_index];
+	desc_buffer->indirect_descriptors->setLength(desc_buffer->indirect_descriptors->getCapacity());
+	UInt32 max_segments = static_cast<UInt32>(
+		desc_buffer->indirect_descriptors->getLength() / sizeof(VirtioVringDesc));
+	VirtioVringDesc* desc_array = static_cast<VirtioVringDesc*>(desc_buffer->indirect_descriptors->getBytesNoCopy());
+	
+	if (min_descs_required > max_segments)
+	{
+		return kIOReturnUnsupported;
+	}
+	if (min_descs_required == 0)
+	{
+		return kIOReturnBadArgument;
+	}
+
+	virtio_output_indirect_segment_state desc_output = { desc_array, 0 };
+	desc_buffer->dma_cmd_used = true;
+	if (device_readable_descs)
+	{
+		desc_output.writable = false;
+		IOReturn result = generate_indirect_segment_dma(queue, desc_buffer->dma_cmd, device_readable_buf, min_descs_required, max_segments, &desc_output);
+		if (result != kIOReturnSuccess)
+		{
+			returnUnusedDescriptor(queue, main_descriptor_index);
+			return result;
+		}
+	}
+	if (device_writable_descs)
+	{
+		desc_output.writable = true;
+		IOReturn result = generate_indirect_segment_dma(queue, desc_buffer->dma_cmd_2, device_writable_buf, min_descs_required, max_segments, &desc_output);
+		if (result != kIOReturnSuccess)
+		{
+			if (device_readable_descs)
+				desc_buffer->dma_cmd->clearMemoryDescriptor();
+			returnUnusedDescriptor(queue, main_descriptor_index);
+			return result;
+		}
+	}
+	
+	desc_buffer->indirect_descriptors->setLength(desc_output.next_descriptor_index * sizeof(VirtioVringDesc));
+	IOReturn result = desc_buffer->dma_indirect_descriptors->setMemoryDescriptor(desc_buffer->indirect_descriptors, true /* prepare DMA */);
+	if (result != kIOReturnSuccess)
+	{
+		desc_buffer->dma_cmd->clearMemoryDescriptor();
+		desc_buffer->dma_cmd_2->clearMemoryDescriptor();
+		returnUnusedDescriptor(queue, main_descriptor_index);
+		return result;
+	}
+	
+	UInt64 offset = 0;
+	UInt32 segments = 1;
+	virtio_output_segment_for_indirect_descs_state state = { queue, main_descriptor_index };
+	result = desc_buffer->dma_indirect_descriptors->genIOVMSegments(&offset, &state, &segments);
+	if (result != kIOReturnSuccess || segments < 1 || offset != desc_buffer->indirect_descriptors->getLength())
+	{
+		desc_buffer->dma_indirect_descriptors->clearMemoryDescriptor();
+		desc_buffer->dma_cmd->clearMemoryDescriptor();
+		desc_buffer->dma_cmd_2->clearMemoryDescriptor();
+		returnUnusedDescriptor(queue, main_descriptor_index);
+		return result;
+	}
+	desc_buffer->completion = completion;
+	desc_buffer->next_desc = -1;
+	
+	/*
+	kprintf("Emitting request on descriptor %u with %llu bytes and %u indirect descriptors...\n",
+		main_descriptor_index, (device_readable_buf ? device_readable_buf->getLength() : 0) + (device_writable_buf ? device_writable_buf->getLength() : 0), desc_output.next_descriptor_index);
+	*/
+	
+	virtio_virtqueue_add_descriptor_to_ring(queue, main_descriptor_index);
+	
 	if((queue->used_ring->flags & VirtioVringUsedFlag::NO_NOTIFY)==0)
 	{
-		this->pci_device->ioWrite16(VirtioLegacyHeaderOffset::QUEUE_NOTIFY, queue_index, this->pci_virtio_header_iomap);
+		pci_device->ioWrite16(VirtioLegacyHeaderOffset::QUEUE_NOTIFY, queue_index, this->pci_virtio_header_iomap);
 	}
 	return kIOReturnSuccess;
 }
+
+static IOReturn generate_indirect_segment_dma(VirtioVirtqueue* queue, IODMACommand* dma_cmd, IOMemoryDescriptor* buf, unsigned& min_descs_required, UInt32& max_segments, virtio_output_indirect_segment_state* desc_output)
+{
+	IOReturn result = dma_cmd->setMemoryDescriptor(buf, true /* prepare DMA */);
+	UInt64 offset = 0;
+	--min_descs_required;
+	UInt32 gen_segments = max_segments - min_descs_required;
+	result = dma_cmd->genIOVMSegments(&offset, desc_output, &gen_segments);
+	if (result != kIOReturnSuccess || max_segments < 1 || offset != buf->getLength())
+	{
+		if (result == kIOReturnSuccess)
+		{
+			IOLog("VirtioLegacyPCIDevice: generate_indirect_segment_dma(): emitted %u segments up to offset %llu for buffer with %llu bytes\n", max_segments, offset, buf->getLength());
+			result = kIOReturnInternalError;
+		}
+		dma_cmd->clearMemoryDescriptor();
+		return result;
+	}
+	
+	max_segments -= gen_segments;
+	return kIOReturnSuccess;
+}
+
+static void fill_vring_descriptor(VirtioVringDesc* descriptor, int16_t descriptorIndex, VirtioVringDesc* previousDescriptor, IODMACommand::Segment64 segment, bool device_writable);
+
+bool VirtioLegacyPCIDevice::outputVringDescSegmentForIndirectTable(
+	IODMACommand* target, IODMACommand::Segment64 segment, void* segments, UInt32 segmentIndex)
+{
+	virtio_output_segment_for_indirect_descs_state* state = static_cast<virtio_output_segment_for_indirect_descs_state*>(segments);
+	VirtioVringDesc* descriptor = &state->queue->descriptor_table[state->main_descriptor_index];
+	fill_vring_descriptor(descriptor, state->main_descriptor_index, nullptr, segment, false);
+	descriptor->flags = VirtioVringDescFlag::INDIRECT;
+
+	return true;
+}
+
+bool VirtioLegacyPCIDevice::outputIndirectVringDescSegment(
+	IODMACommand* target, IODMACommand::Segment64 segment, void* segments, UInt32 segmentIndex)
+{
+	virtio_output_indirect_segment_state* state = static_cast<virtio_output_indirect_segment_state*>(segments);
+	unsigned index = state->next_descriptor_index;
+	VirtioVringDesc* descriptor = &state->desc_array[index];
+	
+	fill_vring_descriptor(descriptor, index, index == 0 ? nullptr : &state->desc_array[index - 1], segment, state->writable);
+	
+	state->next_descriptor_index++;
+	
+	return true;
+}
+
 
 bool VirtioLegacyPCIDevice::outputVringDescSegment(
 	IODMACommand* target, IODMACommand::Segment64 segment, void* segments, UInt32 segmentIndex)
@@ -770,13 +993,29 @@ bool VirtioLegacyPCIDevice::outputVringDescSegment(
 	}
 	
 	VirtioVringDesc* descriptor = &queue->descriptor_table[descriptorIndex];
+	uint16_t previousDescriptorIndex = chain->current_last_descriptor_index;
+	VirtioVringDesc* previousDescriptor = previousDescriptorIndex == UINT16_MAX ? nullptr : &queue->descriptor_table[previousDescriptorIndex];
+	if (previousDescriptorIndex != UINT16_MAX)
+	{
+		VirtioBuffer* previousBuffer = &queue->descriptor_buffers[previousDescriptorIndex];
+		previousBuffer->next_desc = descriptorIndex;
+	}
 	
+	fill_vring_descriptor(descriptor, descriptorIndex, previousDescriptor, segment, chain->device_writable);
+
+	queue->descriptor_buffers[descriptorIndex].next_desc = -1;
+	chain->current_last_descriptor_index = descriptorIndex;
+	return true;
+}
+
+static void fill_vring_descriptor(VirtioVringDesc* descriptor, int16_t descriptorIndex, VirtioVringDesc* previousDescriptor, IODMACommand::Segment64 segment, bool device_writable)
+{
 	// 2. fill physical address & length fields in descriptor with values from segment argument
 	descriptor->phys_address = segment.fIOVMAddr;
 	descriptor->length_bytes = static_cast<uint32_t>(segment.fLength);
 	
 	// set flags to 0 or WRITE depending on chain->device_writable
-	if(chain->device_writable)
+	if (device_writable)
 	{
 		descriptor->flags = VirtioVringDescFlag::DEVICE_WRITABLE;
 	}
@@ -785,23 +1024,15 @@ bool VirtioLegacyPCIDevice::outputVringDescSegment(
 		descriptor->flags = 0;
 	}
 	// 3. Check if this is the first segment
-	if(chain->current_last_descriptor_index != UINT16_MAX)
+	if (previousDescriptor != nullptr)
 	{
-		// 4a. If not first segment: find previous descriptor, update its next field with current descriptor index, and set "next" flag
-		uint16_t previousDescriptorIndex = chain->current_last_descriptor_index;
-		VirtioVringDesc* previousDescriptor = &queue->descriptor_table[previousDescriptorIndex];
+		// update previous descriptor's next field with current descriptor index, and set "next" flag
 		previousDescriptor->next = descriptorIndex;
 		previousDescriptor->flags |= VirtioVringDescFlag::NEXT;
-		VirtioBuffer* previousBuffer = &queue->descriptor_buffers[previousDescriptorIndex];
-		previousBuffer->next_desc = descriptorIndex;
 	}
 
 	// 5. Save index of current descriptor as last descriptor
 	descriptor->next = 0xffff;
-	queue->descriptor_buffers[descriptorIndex].next_desc = -1;
-	chain->current_last_descriptor_index = descriptorIndex;
-
-	return true;
 }
 
 unsigned VirtioLegacyPCIDevice::pollCompletedRequestsInVirtqueue(unsigned queue_index, unsigned completion_limit)
@@ -840,10 +1071,17 @@ unsigned VirtioLegacyPCIDevice::processCompletedRequestsInVirtqueue(VirtioVirtqu
 			while (descriptorIndex >= 0)
 			{
 				int16_t next = virtqueue->descriptor_buffers[descriptorIndex].next_desc;
-				if (virtqueue->descriptor_buffers[descriptorIndex].dma_cmd_used)
+				VirtioBuffer* buffer = &virtqueue->descriptor_buffers[descriptorIndex];
+				if (buffer->dma_cmd_used)
 				{
-					virtqueue->descriptor_buffers[descriptorIndex].dma_cmd->clearMemoryDescriptor(true);
-					virtqueue->descriptor_buffers[descriptorIndex].dma_cmd_used = false;
+					buffer->dma_cmd->clearMemoryDescriptor(true);
+					buffer->dma_cmd_used = false;
+					if (virtqueue->indirect_descriptors)
+					{
+						buffer->dma_cmd_2->clearMemoryDescriptor(true);
+						buffer->dma_indirect_descriptors->clearMemoryDescriptor(true);
+						//kprintf("Completed request on descriptor %u\n", descriptorIndex);
+					}
 				}
 				//IOLog("VirtioLegacyPCIDevice::processCompletedRequestsInVirtqueue(): returning descriptor %d to unused list\n", descriptorIndex);
 				returnUnusedDescriptor(virtqueue, descriptorIndex);

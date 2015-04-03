@@ -23,6 +23,7 @@
 struct VirtioCompletion;
 struct VirtioVirtqueue;
 struct VirtioBuffer;
+class IOBufferMemoryDescriptor;
 
 class VirtioDevice : public IOService
 {
@@ -37,7 +38,7 @@ public:
 	virtual uint32_t supportedFeatures() = 0;
 	virtual bool requestFeatures(uint32_t use_features) = 0;
 	virtual void failDevice() = 0;
-	virtual IOReturn setupVirtqueues(unsigned number_queues, const bool queue_interrupts_enabled[] = nullptr, unsigned out_queue_sizes[] = nullptr) = 0;
+	virtual IOReturn setupVirtqueues(unsigned number_queues, const bool queue_interrupts_enabled[] = nullptr, unsigned out_queue_sizes[] = nullptr, const unsigned indirect_desc_per_request[] = nullptr) = 0;
 	virtual IOReturn setVirtqueueInterruptsEnabled(unsigned queue_id, bool enabled) = 0;
 	
 	typedef void(*ConfigChangeAction)(OSObject* target, VirtioDevice* source);
@@ -78,6 +79,9 @@ struct VirtioBuffer
 	/** Also used for maintaining the list of unused descriptors. */
 	int16_t next_desc;
 	bool dma_cmd_used;
+	IOBufferMemoryDescriptor* indirect_descriptors;
+	IODMACommand* dma_indirect_descriptors;
+	IODMACommand* dma_cmd_2;
 };
 
 struct VirtioVirtqueue
@@ -101,6 +105,8 @@ struct VirtioVirtqueue
 
 	/// Whether or not the client driver would like interrupts on request completion
 	bool interrupts_requested;
+	
+	bool indirect_descriptors;
 
 	/// If >= 0, an unused descriptor table entry, with all others chained along next_desc
 	int16_t first_unused_descriptor_index;
@@ -163,6 +169,7 @@ namespace VirtioDeviceGenericFeature
   enum VirtioDeviceGenericFeatures
 	{
 		VIRTIO_F_RING_EVENT_IDX = (1u << 29u),
+		VIRTIO_F_RING_INDIRECT_DESC = (1u << 28u),
 	};
 }
 
