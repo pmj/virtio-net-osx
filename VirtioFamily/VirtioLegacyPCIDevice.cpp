@@ -529,14 +529,14 @@ fail:
 	return result;
 }
 
-void VirtioLegacyPCIDevice::startDevice(ConfigChangeAction action, OSObject* target)
+void VirtioLegacyPCIDevice::startDevice(ConfigChangeAction action, OSObject* target, IOWorkLoop* workloop)
 {
 	// save action & target
 	this->configChangeAction = action;
 	this->configChangeTarget = target;
 	
 	// enable interrupt handling
-	this->beginHandlingInterrupts();
+	this->beginHandlingInterrupts(workloop);
 
 
 	this->pci_device->ioWrite8(VirtioLegacyHeaderOffset::DEVICE_STATUS, 1|2|4, this->pci_virtio_header_iomap);
@@ -1140,7 +1140,13 @@ void VirtioLegacyPCIDevice::stop(IOService* provider)
 	VLTLog("VirtioLegacyPCIDevice::stop(): done\n");
 }
 
-bool VirtioLegacyPCIDevice::beginHandlingInterrupts()
+IOWorkLoop* VirtioLegacyPCIDevice::getWorkLoop() const
+{
+	return this->work_loop ?: (this->pci_device ? this->pci_device->getWorkLoop() : nullptr) ;
+}
+
+
+bool VirtioLegacyPCIDevice::beginHandlingInterrupts(IOWorkLoop* workloop)
 {
 	//IOLog("VirtioLegacyPCIDevice::beginHandlingInterrupts()\n");
 	if (!this->pci_device)
@@ -1188,10 +1194,23 @@ bool VirtioLegacyPCIDevice::beginHandlingInterrupts()
 		OSSafeReleaseNULL(intr_event_source);
 		return false;
 	}
-	this->work_loop = getWorkLoop();
-	if (!work_loop)
+	
+	assert(this->work_loop == nullptr);
+	if (workloop == nullptr)
+	{
+		workloop = this->pci_device->getWorkLoop();
+	}
+	if (workloop == nullptr)
+	{
+		workloop = IOWorkLoop::workLoop();
+	}
+	else
+	{
+		workloop->retain();
+	}
+	this->work_loop = workloop;
+	if (!this->work_loop)
 		return false;
-	this->work_loop->retain();
 	
 	if (kIOReturnSuccess != this->work_loop->addEventSource(intr_event_source))
 	{
@@ -1279,6 +1298,7 @@ bool VirtioLegacyPCIDevice::endHandlingInterrupts()
 		this->work_loop->removeEventSource(this->intr_event_source);
 		OSSafeReleaseNULL(this->intr_event_source);
 	}
+	OSSafeReleaseNULL(this->work_loop);
 	return true;
 }
 

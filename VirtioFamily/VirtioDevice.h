@@ -42,7 +42,7 @@ public:
 	virtual IOReturn setVirtqueueInterruptsEnabled(unsigned queue_id, bool enabled) = 0;
 	
 	typedef void(*ConfigChangeAction)(OSObject* target, VirtioDevice* source);
-	virtual void startDevice(ConfigChangeAction action = nullptr, OSObject* target = nullptr) = 0;
+	virtual void startDevice(ConfigChangeAction action = nullptr, OSObject* target = nullptr, IOWorkLoop* workloop = nullptr) = 0;
 	
 	virtual IOReturn submitBuffersToVirtqueue(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion) = 0;
 	virtual unsigned pollCompletedRequestsInVirtqueue(unsigned queue_index, unsigned completion_limit = 0) = 0;

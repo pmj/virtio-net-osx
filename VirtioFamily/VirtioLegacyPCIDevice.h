@@ -48,7 +48,7 @@ public:
 	virtual void failDevice() override;
 	virtual IOReturn setupVirtqueues(unsigned number_queues, const bool queue_interrupts_enabled[] = nullptr, unsigned out_queue_sizes[] = nullptr, const unsigned indirect_desc_per_request[] = nullptr) override;
 	virtual IOReturn setVirtqueueInterruptsEnabled(unsigned queue_id, bool enabled) override;
-	virtual void startDevice(ConfigChangeAction action = nullptr, OSObject* target = nullptr) override;
+	virtual void startDevice(ConfigChangeAction action = nullptr, OSObject* target = nullptr, IOWorkLoop* workloop = nullptr) override;
 	
 	virtual void closePCIDevice();
 
@@ -77,13 +77,13 @@ public:
 	virtual bool terminateClient(IOService * client, IOOptionBits options) override;
 #endif
 
-	virtual bool beginHandlingInterrupts();
+	virtual bool beginHandlingInterrupts(IOWorkLoop* workloop);
 	static void interruptAction(OSObject* me, IOInterruptEventSource* source, int count);
 	static bool interruptFilter(OSObject* me, IOFilterInterruptEventSource* source);
 	virtual void interruptAction(IOInterruptEventSource* source, int count);
 	virtual bool endHandlingInterrupts();
 
-
+    virtual IOWorkLoop* getWorkLoop() const override;
 private:
 	IOReturn setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, unsigned queue_id, bool interrupts_enabled, unsigned indirect_desc_per_request);
 	
