@@ -115,7 +115,7 @@ bool SSDCMultiSubrangeMemoryDescriptor::initWithDescriptorRanges(
 		subranges[i].md->retain();
 		_length += subranges[i].length;
 		if (!_tag) _tag = subranges[i].md->getTag();
-		ssdc_assert(subranges[i].md->getDirection() == direction);
+		ssdc_assert((subranges[i].md->getDirection() & direction) == direction);
 	}
 	
 	return true;
