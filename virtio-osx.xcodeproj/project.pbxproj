@@ -17,6 +17,8 @@
 		299F18F813DC183D000200A5 /* virtio_net.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 299F18F713DC183D000200A5 /* virtio_net.cpp */; };
 		29A7E26213E2DC0B00E33939 /* virtio_ring.h in Headers */ = {isa = PBXBuildFile; fileRef = 29A7E26113E2DC0B00E33939 /* virtio_ring.h */; };
 		29CD526E13DD86D40062DAA6 /* readme.md in Resources */ = {isa = PBXBuildFile; fileRef = 29CD526D13DD86D40062DAA6 /* readme.md */; };
+		D36B0C871AE6566100EB445E /* VirtioSCSIController.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D36B0C851AE6566100EB445E /* VirtioSCSIController.cpp */; };
+		D36B0C881AE6566100EB445E /* VirtioSCSIController.h in Headers */ = {isa = PBXBuildFile; fileRef = D36B0C861AE6566100EB445E /* VirtioSCSIController.h */; };
 		D395DCC71AC96F0C00C4EE18 /* VirtioBlockDevice.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D395DCC51AC96F0C00C4EE18 /* VirtioBlockDevice.cpp */; };
 		D395DCC81AC96F0C00C4EE18 /* VirtioBlockDevice.h in Headers */ = {isa = PBXBuildFile; fileRef = D395DCC61AC96F0C00C4EE18 /* VirtioBlockDevice.h */; };
 		D395DCD01ACAD4F200C4EE18 /* slist_queue.c in Sources */ = {isa = PBXBuildFile; fileRef = D395DCCB1ACAD4F200C4EE18 /* slist_queue.c */; };
@@ -55,6 +57,8 @@
 		299F18F713DC183D000200A5 /* virtio_net.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = virtio_net.cpp; sourceTree = "<group>"; };
 		29A7E26113E2DC0B00E33939 /* virtio_ring.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = virtio_ring.h; sourceTree = "<group>"; };
 		29CD526D13DD86D40062DAA6 /* readme.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; name = readme.md; path = ../readme.md; sourceTree = "<group>"; };
+		D36B0C851AE6566100EB445E /* VirtioSCSIController.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = VirtioSCSIController.cpp; sourceTree = "<group>"; };
+		D36B0C861AE6566100EB445E /* VirtioSCSIController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = VirtioSCSIController.h; sourceTree = "<group>"; };
 		D395DCC51AC96F0C00C4EE18 /* VirtioBlockDevice.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = VirtioBlockDevice.cpp; sourceTree = "<group>"; };
 		D395DCC61AC96F0C00C4EE18 /* VirtioBlockDevice.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = VirtioBlockDevice.h; sourceTree = "<group>"; };
 		D395DCCB1ACAD4F200C4EE18 /* slist_queue.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = slist_queue.c; sourceTree = "<group>"; };
@@ -199,6 +203,8 @@
 				D3D41D401ABB4D4D0021F71A /* VirtioMemBalloonDevice.cpp */,
 				D395DCC61AC96F0C00C4EE18 /* VirtioBlockDevice.h */,
 				D395DCC51AC96F0C00C4EE18 /* VirtioBlockDevice.cpp */,
+				D36B0C861AE6566100EB445E /* VirtioSCSIController.h */,
+				D36B0C851AE6566100EB445E /* VirtioSCSIController.cpp */,
 				D3E6DCE21AC5A231002443CE /* VirtioNetworkDevice.h */,
 				D3E6DCE11AC5A231002443CE /* VirtioNetworkDevice.cpp */,
 				D395DCD61ACAF01900C4EE18 /* PJCommandGate.h */,
@@ -245,6 +251,7 @@
 				D3D41D471ABC386B0021F71A /* VirtioDevice.h in Headers */,
 				D395DCD11ACAD4F200C4EE18 /* slist_queue.h in Headers */,
 				D3D41D3F1AB86AA10021F71A /* VirtioPCIDevice.h in Headers */,
+				D36B0C881AE6566100EB445E /* VirtioSCSIController.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -366,6 +373,7 @@
 			files = (
 				D395DCC71AC96F0C00C4EE18 /* VirtioBlockDevice.cpp in Sources */,
 				D395DCD01ACAD4F200C4EE18 /* slist_queue.c in Sources */,
+				D36B0C871AE6566100EB445E /* VirtioSCSIController.cpp in Sources */,
 				D3A434B01ACAF57800EE7F73 /* SSDCMultiSubrangeMemoryDescriptor.cpp in Sources */,
 				D3D41D3A1AB860CC0021F71A /* VirtioLegacyPCIDevice.cpp in Sources */,
 				D3D41D461ABC386B0021F71A /* VirtioDevice.cpp in Sources */,
@@ -482,6 +490,7 @@
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DEBUG=1",
 					"$(inherited)",
+					MACH_ASSERT,
 				);
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
 				GCC_WARN_UNDECLARED_SELECTOR = YES;

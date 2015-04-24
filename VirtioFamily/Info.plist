@@ -94,6 +94,21 @@
 			<key>VirtioDeviceTypeID</key>
 			<integer>1</integer>
 		</dict>
+		<key>VirtioSCSIController</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>eu.dennis-jordan.driver.$(PRODUCT_NAME:rfc1034identifier)</string>
+			<key>IOClass</key>
+			<string>eu_dennis__jordan_driver_VirtioSCSIController</string>
+			<key>IOProviderClass</key>
+			<string>eu_dennis__jordan_driver_VirtioLegacyPCIDevice</string>
+			<key>VirtioDeviceTypeID</key>
+			<integer>8</integer>
+			<key>IOMaximumSegmentByteCountRead</key>
+			<integer>4294967295</integer>
+			<key>IOMaximumSegmentByteCountWrite</key>
+			<integer>4294967295</integer>
+		</dict>
 	</dict>
 	<key>OSBundleLibraries</key>
 	<dict>
@@ -107,6 +122,8 @@
 		<string>10.0</string>
 		<key>com.apple.iokit.IOStorageFamily</key>
 		<string>1.0</string>
+		<key>com.apple.iokit.IOSCSIParallelFamily</key>
+		<string>3.0</string>
 	</dict>
 	<key>OSBundleRequired</key>
 	<string>Root</string>
