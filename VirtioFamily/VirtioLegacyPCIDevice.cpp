@@ -581,6 +581,21 @@ uint8_t VirtioLegacyPCIDevice::readDeviceSpecificConfig8(unsigned device_specifi
 	return this->pci_device->ioRead8(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
 }
 
+uint16_t VirtioLegacyPCIDevice::readDeviceSpecificConfig16LETransitional(unsigned device_specific_offset)
+{
+	return VirtioLegacyPCIDevice::readDeviceSpecificConfig16Native(device_specific_offset);
+}
+uint32_t VirtioLegacyPCIDevice::readDeviceSpecificConfig32LETransitional(unsigned device_specific_offset)
+{
+	return VirtioLegacyPCIDevice::readDeviceSpecificConfig32Native(device_specific_offset);
+}
+
+uint16_t VirtioLegacyPCIDevice::readDeviceSpecificConfig16LE(unsigned device_specific_offset)
+{
+	uint16_t val = this->pci_device->ioRead16(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
+	return OSSwapLittleToHostInt16(val);
+}
+
 uint32_t VirtioLegacyPCIDevice::readDeviceSpecificConfig32LE(unsigned device_specific_offset)
 {
 	uint32_t val = this->pci_device->ioRead32(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
@@ -603,11 +618,23 @@ uint16_t VirtioLegacyPCIDevice::readDeviceSpecificConfig16Native(unsigned device
 	return this->pci_device->ioRead16(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
 }
 
+uint32_t VirtioLegacyPCIDevice::readDeviceSpecificConfig32Native(unsigned device_specific_offset)
+{
+	return this->pci_device->ioRead32(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
+}
+
+
 void VirtioLegacyPCIDevice::writeDeviceSpecificConfig32LE(unsigned device_specific_offset, uint32_t value_to_write)
 {
 	uint32_t le_value = OSSwapHostToLittleInt32(value_to_write);
 	this->pci_device->ioWrite32(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, le_value, this->pci_virtio_header_iomap);
 }
+
+void VirtioLegacyPCIDevice::writeDeviceSpecificConfig32LETransitional(unsigned device_specific_offset, uint32_t value_to_write)
+{
+	this->pci_device->ioWrite32(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, value_to_write, this->pci_virtio_header_iomap);
+}
+
 
 struct virtio_legacy_pci_vring_desc_chain
 {
