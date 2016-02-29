@@ -22,6 +22,7 @@ class VirtioLegacyPCIDevice : public VirtioDevice
 protected:
 	IOMemoryMap* pci_virtio_header_iomap;
 	IOPCIDevice* pci_device;
+	bool msix_active;
 	uint32_t features;
 	uint32_t active_features;
 	

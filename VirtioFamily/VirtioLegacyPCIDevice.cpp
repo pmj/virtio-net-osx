@@ -31,12 +31,15 @@ namespace VirtioLegacyHeaderOffset
 		QUEUE_NOTIFY = 2 + QUEUE_SELECT,
 		DEVICE_STATUS = 2 + QUEUE_NOTIFY,
 		ISR_STATUS = 1 + DEVICE_STATUS,
-		END_HEADER = 1 + ISR_STATUS
+		BASIC_END_HEADER = 1 + ISR_STATUS,
+		MSIX_CONFIG_VECTOR = BASIC_END_HEADER,
+		MSIX_QUEUE_VECTOR = 2 + MSIX_CONFIG_VECTOR,
+		MSIX_END_HEADER = 2 + MSIX_QUEUE_VECTOR,
 	};
 }
 namespace
 {
-	const size_t VIRTIO_LEGACY_HEADER_MIN_LEN = VirtioLegacyHeaderOffset::END_HEADER;
+	const size_t VIRTIO_LEGACY_HEADER_MIN_LEN = VirtioLegacyHeaderOffset::BASIC_END_HEADER;
 }
 
 struct VirtioLegacyPCIVirtqueue
@@ -164,7 +167,7 @@ bool VirtioLegacyPCIDevice::start(IOService* provider)
 		return false;
 	}
 	
-	this->deviceSpecificConfigStartHeaderOffset = VirtioLegacyHeaderOffset::END_HEADER;
+	this->deviceSpecificConfigStartHeaderOffset = VirtioLegacyHeaderOffset::BASIC_END_HEADER;
 	
 	this->resetDevice();
 	//write out supported features
@@ -1157,6 +1160,7 @@ bool VirtioLegacyPCIDevice::beginHandlingInterrupts(IOWorkLoop* workloop)
 	
 	// Message signaled interrupts (MSI) are more efficient than the normal broadcast ones, so let's try to use them
 	int msi_index = -1;
+	int legacy_index = -1;
 	int intr_index = 0;
 	
 	// keep trying interrupt source indices until we run out or find an MSI one
@@ -1173,6 +1177,10 @@ bool VirtioLegacyPCIDevice::beginHandlingInterrupts(IOWorkLoop* workloop)
 			msi_index = intr_index;
 			break;
 		}
+		else
+		{
+			legacy_index = intr_index;
+		}
 		++intr_index;
 	}
 	
@@ -1186,6 +1194,18 @@ bool VirtioLegacyPCIDevice::beginHandlingInterrupts(IOWorkLoop* workloop)
 		intr_index = 0;
 	}
 
+	IOByteCount msix_cap_offset = 0;
+	if (msi_index >= 0)
+	{
+		// MSI or MSI-X detected
+		uint32_t msix_cap_val = this->pci_device->extendedFindPCICapability(kIOPCIMSIXCapability, &msix_cap_offset);
+		
+		if (msix_cap_offset != 0)
+		{
+			// Device supports MSI-X. IOPCIFamily seems to have problems with this, so revert to legacy interrupts
+			intr_index = legacy_index;
+		}
+	}
 	
 	this->intr_event_source = IOFilterInterruptEventSource::filterInterruptEventSource(this, &interruptAction, &interruptFilter, this->pci_device, intr_index);
 	if (!intr_event_source)
@@ -1193,6 +1213,18 @@ bool VirtioLegacyPCIDevice::beginHandlingInterrupts(IOWorkLoop* workloop)
 		IOLog("VirtioLegacyPCIDevice beginHandlingInterrupts(): Error! %s interrupt event source failed.\n", intr_event_source ? "Initialising" : "Allocating");
 		OSSafeReleaseNULL(intr_event_source);
 		return false;
+	}
+	
+	if (msi_index >= 0 && msix_cap_offset > 0)
+	{
+		// check if MSI-X is enabled on device. If so, shift the
+		uint16_t msix_control = this->pci_device->configRead16(msix_cap_offset + 2);
+		this->msix_active = (msix_control & 0x8000) != 0;
+		if (this->msix_active)
+		{
+			kprintf("VirtioLegacyPCIDevice[%p] beginHandlingInterrupts(): MSI-X appears to be active\n", this);
+			this->deviceSpecificConfigStartHeaderOffset = VirtioLegacyHeaderOffset::MSIX_END_HEADER;
+		}
 	}
 	
 	assert(this->work_loop == nullptr);
