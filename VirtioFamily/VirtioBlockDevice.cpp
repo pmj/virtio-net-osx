@@ -242,6 +242,8 @@ bool VirtioBlockDevice::start(IOService* provider)
 			me->block_size = block_size;
 			me->sectors_per_block = block_size / 512;
 			IOLog("VirtioBlockDevice::start(): capacity = %llu, size_max = %u, block_size = %u\n", capacity, size_max, block_size);
+			kprintf("VirtioBlockDevice::start(): capacity = %llu, size_max = %u, block_size = %u\n", capacity, size_max, block_size);
+
 			return kIOReturnSuccess;
 		});
 	
@@ -637,6 +639,7 @@ UInt32 VirtioBlockDevice::doGetFormatCapacities(UInt64* capacities, UInt32 capac
 		return 0;
 	if (capacities != nullptr)
 		capacities[0] = capacity_in_bytes;
+	kprintf("capacity in bytes: %llu\n", capacities[0]);
 	return 1;
 }
 

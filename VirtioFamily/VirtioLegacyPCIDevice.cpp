@@ -189,10 +189,18 @@ bool VirtioLegacyPCIDevice::mapHeaderIORegion()
 		IOLog("writeDeviceStatusField mapConfigurationSpace(): Error! Memory-Mapping configuration space failed.\n");
 		return false;
 	}
-	/*
-	IOLog("writeDeviceStatusField mapConfigurationSpace(): Mapped %llu bytes of device memory at %llX. (physical address %llX)\n",
+	
+	kprintf("writeDeviceStatusField mapConfigurationSpace(): Mapped %llu bytes of device memory at %llX. (physical address %llX)\n",
 		static_cast<uint64_t>(iomap->getLength()), iomap->getAddress(), this->pci_device->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0)->getPhysicalSegment(0, NULL, 0));
-	*/
+
+	IOByteCount config_bytes = iomap->getLength();
+	for (unsigned offset = 0; offset < config_bytes; offset += 4)
+	{
+		uint32_t val = this->pci_device->ioRead32(offset, this->pci_virtio_header_iomap);
+		kprintf("%08x%s", val, (offset % 16 == 12) ? "\n" : " ");
+	}
+	kprintf("\n");
+
 	this->pci_virtio_header_iomap = iomap;
 	return true;
 }
@@ -543,6 +551,15 @@ void VirtioLegacyPCIDevice::startDevice(ConfigChangeAction action, OSObject* tar
 
 
 	this->pci_device->ioWrite8(VirtioLegacyHeaderOffset::DEVICE_STATUS, 1|2|4, this->pci_virtio_header_iomap);
+
+	kprintf("Config area after device start:\n");
+	IOByteCount config_bytes = this->pci_virtio_header_iomap->getLength();
+	for (unsigned offset = 0; offset < config_bytes; offset += 4)
+	{
+		uint32_t val = this->pci_device->ioRead32(offset, this->pci_virtio_header_iomap);
+		kprintf("%08x%s", val, offset % 4 == 3 ? "\n" : " ");
+	}
+	kprintf("\n");
 }
 
 bool VirtioLegacyPCIDevice::handleOpen(IOService* forClient, IOOptionBits options, void* arg)
