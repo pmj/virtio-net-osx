@@ -616,6 +616,12 @@ uint64_t VirtioLegacyPCIDevice::readDeviceSpecificConfig64LE(unsigned device_spe
 	return (static_cast<uint64_t>(high) << 32u) | low;
 }
 
+uint64_t VirtioLegacyPCIDevice::readDeviceSpecificConfig64LETransitional(unsigned device_specific_offset)
+{
+	return this->readDeviceSpecificConfig64Native(device_specific_offset);
+}
+
+
 uint16_t VirtioLegacyPCIDevice::readDeviceSpecificConfig16Native(unsigned device_specific_offset)
 {
 	return this->pci_device->ioRead16(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
@@ -624,6 +630,22 @@ uint16_t VirtioLegacyPCIDevice::readDeviceSpecificConfig16Native(unsigned device
 uint32_t VirtioLegacyPCIDevice::readDeviceSpecificConfig32Native(unsigned device_specific_offset)
 {
 	return this->pci_device->ioRead32(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
+}
+
+uint64_t VirtioLegacyPCIDevice::readDeviceSpecificConfig64Native(unsigned device_specific_offset)
+{
+#if defined(__LITTLE_ENDIAN__)
+	uint32_t low = this->pci_device->ioRead32(
+		this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
+	uint32_t high = this->pci_device->ioRead32(
+		this->deviceSpecificConfigStartHeaderOffset + device_specific_offset + 4, this->pci_virtio_header_iomap);
+#elif defined(__BIG_ENDIAN__)
+	uint32_t high = this->pci_device->ioRead32(
+		this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
+	uint32_t low = this->pci_device->ioRead32(
+		this->deviceSpecificConfigStartHeaderOffset + device_specific_offset + 4, this->pci_virtio_header_iomap);
+#endif
+	return (static_cast<uint64_t>(high) << 32u) | low;
 }
 
 

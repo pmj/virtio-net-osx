@@ -229,7 +229,7 @@ bool VirtioBlockDevice::start(IOService* provider)
 		{
 			VirtioBlockDevice* me = static_cast<VirtioBlockDevice*>(block_dev);
 			
-			uint64_t capacity = me->virtio_device->readDeviceSpecificConfig64LE(CONFIG_CAPCITY_OFFSET);
+			uint64_t capacity = me->virtio_device->readDeviceSpecificConfig64LETransitional(CONFIG_CAPCITY_OFFSET);
 			me->capacity_in_bytes = capacity*512;
 			
 			uint32_t size_max = me->virtio_device->readDeviceSpecificConfig32LE(CONFIG_SIZE_MAX_OFFSET);

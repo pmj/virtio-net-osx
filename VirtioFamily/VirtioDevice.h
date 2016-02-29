@@ -50,11 +50,13 @@ public:
 	virtual uint8_t readDeviceSpecificConfig8(unsigned device_specific_offset) = 0;
 	virtual uint16_t readDeviceSpecificConfig16LETransitional(unsigned device_specific_offset) = 0;
 	virtual uint32_t readDeviceSpecificConfig32LETransitional(unsigned device_specific_offset) = 0;
+	virtual uint64_t readDeviceSpecificConfig64LETransitional(unsigned device_specific_offset) = 0;
 	virtual uint16_t readDeviceSpecificConfig16LE(unsigned device_specific_offset) = 0;
 	virtual uint32_t readDeviceSpecificConfig32LE(unsigned device_specific_offset) = 0;
 	virtual uint64_t readDeviceSpecificConfig64LE(unsigned device_specific_offset) = 0;
 	virtual uint16_t readDeviceSpecificConfig16Native(unsigned device_specific_offset) = 0;
 	virtual uint32_t readDeviceSpecificConfig32Native(unsigned device_specific_offset) = 0;
+	virtual uint64_t readDeviceSpecificConfig64Native(unsigned device_specific_offset) = 0;
 	virtual void writeDeviceSpecificConfig32LE(unsigned device_specific_offset, uint32_t value_to_write) = 0;
 	virtual void writeDeviceSpecificConfig32LETransitional(unsigned device_specific_offset, uint32_t value_to_write) = 0;
 
