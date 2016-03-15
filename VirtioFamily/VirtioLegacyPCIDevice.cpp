@@ -194,7 +194,7 @@ bool VirtioLegacyPCIDevice::mapHeaderIORegion()
 		static_cast<uint64_t>(iomap->getLength()), iomap->getAddress(), this->pci_device->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0)->getPhysicalSegment(0, NULL, 0));
 
 	IOByteCount config_bytes = iomap->getLength();
-	for (unsigned offset = 0; offset < config_bytes; offset += 4)
+	for (uint16_t offset = 0; offset < config_bytes; offset += 4)
 	{
 		uint32_t val = this->pci_device->ioRead32(offset, this->pci_virtio_header_iomap);
 		kprintf("%08x%s", val, (offset % 16 == 12) ? "\n" : " ");
@@ -277,7 +277,7 @@ static inline unsigned vring_mem_size(unsigned qsz)
 		+ virtio_page_align(sizeof(VirtioVringUsedElement) * qsz);
 }
 
-IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, unsigned queue_id, bool interrupts_enabled, unsigned indirect_desc_per_request)
+IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, uint16_t queue_id, bool interrupts_enabled, unsigned indirect_desc_per_request)
 {
 	// write queue selector
 	this->pci_device->ioWrite16(VirtioLegacyHeaderOffset::QUEUE_SELECT, queue_id, this->pci_virtio_header_iomap);
@@ -442,7 +442,7 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, 
 	// initialise list of unused descriptors:
 	queue->queue.first_unused_descriptor_index = 0;
 	// iterate over all VirtioBuffers in descriptor_array and set up their next_desc to +1
-	for(unsigned i = 0; i < num_queue_entries; i++)
+	for(uint16_t i = 0; i < num_queue_entries; i++)
 	{
 		if(i == num_queue_entries-1)
 		{
@@ -468,7 +468,7 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, 
 	return kIOReturnSuccess;
 }
 
-IOReturn VirtioLegacyPCIDevice::setVirtqueueInterruptsEnabled(unsigned queue_id, bool enabled)
+IOReturn VirtioLegacyPCIDevice::setVirtqueueInterruptsEnabled(uint16_t queue_id, bool enabled)
 {
 	if (queue_id > this->num_virtqueues)
 	{
@@ -499,7 +499,7 @@ static void destroy_virtqueue(VirtioLegacyPCIVirtqueue* queue)
 	OSSafeReleaseNULL(queue->queue_mem);
 }
 
-IOReturn VirtioLegacyPCIDevice::setupVirtqueues(unsigned number_queues, const bool queue_interrupts_enabled[], unsigned out_queue_sizes[], const unsigned indirect_desc_per_request[])
+IOReturn VirtioLegacyPCIDevice::setupVirtqueues(uint16_t number_queues, const bool queue_interrupts_enabled[], unsigned out_queue_sizes[], const unsigned indirect_desc_per_request[])
 {
 	const size_t queue_array_size = sizeof(this->virtqueues[0]) * number_queues;
 	VirtioLegacyPCIVirtqueue* queues = static_cast<VirtioLegacyPCIVirtqueue*>(
@@ -509,7 +509,7 @@ IOReturn VirtioLegacyPCIDevice::setupVirtqueues(unsigned number_queues, const bo
 	memset(queues, 0, queue_array_size);
 	
 	IOReturn result = kIOReturnSuccess;
-	for (unsigned i = 0; i < number_queues; ++i)
+	for (uint16_t i = 0; i < number_queues; ++i)
 	{
 		result = this->setupVirtqueue(&queues[i], i, queue_interrupts_enabled ? queue_interrupts_enabled[i] : true, indirect_desc_per_request ? indirect_desc_per_request[i] : 0);
 		
@@ -554,7 +554,7 @@ void VirtioLegacyPCIDevice::startDevice(ConfigChangeAction action, OSObject* tar
 
 	kprintf("Config area after device start:\n");
 	IOByteCount config_bytes = this->pci_virtio_header_iomap->getLength();
-	for (unsigned offset = 0; offset < config_bytes; offset += 4)
+	for (uint16_t offset = 0; offset < config_bytes; offset += 4)
 	{
 		uint32_t val = this->pci_device->ioRead32(offset, this->pci_virtio_header_iomap);
 		kprintf("%08x%s", val, offset % 4 == 3 ? "\n" : " ");
@@ -596,60 +596,35 @@ void VirtioLegacyPCIDevice::handleClose(IOService* forClient, IOOptionBits optio
 	
 }
 
-uint8_t VirtioLegacyPCIDevice::readDeviceSpecificConfig8(unsigned device_specific_offset)
+uint8_t VirtioLegacyPCIDevice::readDeviceConfig8(uint16_t device_specific_offset)
 {
 	return this->pci_device->ioRead8(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
 }
 
-uint16_t VirtioLegacyPCIDevice::readDeviceSpecificConfig16LETransitional(unsigned device_specific_offset)
+uint16_t VirtioLegacyPCIDevice::readDeviceConfig16LETransitional(uint16_t device_specific_offset)
 {
-	return VirtioLegacyPCIDevice::readDeviceSpecificConfig16Native(device_specific_offset);
+	return VirtioLegacyPCIDevice::readDeviceConfig16Native(device_specific_offset);
 }
-uint32_t VirtioLegacyPCIDevice::readDeviceSpecificConfig32LETransitional(unsigned device_specific_offset)
+uint32_t VirtioLegacyPCIDevice::readDeviceConfig32LETransitional(uint16_t device_specific_offset)
 {
-	return VirtioLegacyPCIDevice::readDeviceSpecificConfig32Native(device_specific_offset);
+	return VirtioLegacyPCIDevice::readDeviceConfig32Native(device_specific_offset);
 }
-
-uint16_t VirtioLegacyPCIDevice::readDeviceSpecificConfig16LE(unsigned device_specific_offset)
+uint64_t VirtioLegacyPCIDevice::readDeviceConfig64LETransitional(uint16_t device_specific_offset)
 {
-	uint16_t val = this->pci_device->ioRead16(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
-	return OSSwapLittleToHostInt16(val);
+	return this->readDeviceConfig64Native(device_specific_offset);
 }
 
-uint32_t VirtioLegacyPCIDevice::readDeviceSpecificConfig32LE(unsigned device_specific_offset)
-{
-	uint32_t val = this->pci_device->ioRead32(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
-	return OSSwapLittleToHostInt32(val);
-}
-
-uint64_t VirtioLegacyPCIDevice::readDeviceSpecificConfig64LE(unsigned device_specific_offset)
-{
-	uint32_t low = this->pci_device->ioRead32(
-		this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
-	uint32_t high = this->pci_device->ioRead32(
-		this->deviceSpecificConfigStartHeaderOffset + device_specific_offset + 4, this->pci_virtio_header_iomap);
-	low = OSSwapLittleToHostInt32(low);
-	high = OSSwapLittleToHostInt32(high);
-	return (static_cast<uint64_t>(high) << 32u) | low;
-}
-
-uint64_t VirtioLegacyPCIDevice::readDeviceSpecificConfig64LETransitional(unsigned device_specific_offset)
-{
-	return this->readDeviceSpecificConfig64Native(device_specific_offset);
-}
-
-
-uint16_t VirtioLegacyPCIDevice::readDeviceSpecificConfig16Native(unsigned device_specific_offset)
+uint16_t VirtioLegacyPCIDevice::readDeviceConfig16Native(uint16_t device_specific_offset)
 {
 	return this->pci_device->ioRead16(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
 }
 
-uint32_t VirtioLegacyPCIDevice::readDeviceSpecificConfig32Native(unsigned device_specific_offset)
+uint32_t VirtioLegacyPCIDevice::readDeviceConfig32Native(uint16_t device_specific_offset)
 {
 	return this->pci_device->ioRead32(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, this->pci_virtio_header_iomap);
 }
 
-uint64_t VirtioLegacyPCIDevice::readDeviceSpecificConfig64Native(unsigned device_specific_offset)
+uint64_t VirtioLegacyPCIDevice::readDeviceConfig64Native(uint16_t device_specific_offset)
 {
 #if defined(__LITTLE_ENDIAN__)
 	uint32_t low = this->pci_device->ioRead32(
@@ -666,15 +641,29 @@ uint64_t VirtioLegacyPCIDevice::readDeviceSpecificConfig64Native(unsigned device
 }
 
 
-void VirtioLegacyPCIDevice::writeDeviceSpecificConfig32LE(unsigned device_specific_offset, uint32_t value_to_write)
+void VirtioLegacyPCIDevice::writeDeviceConfig8(uint16_t offset, uint8_t value_to_write)
 {
-	uint32_t le_value = OSSwapHostToLittleInt32(value_to_write);
-	this->pci_device->ioWrite32(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, le_value, this->pci_virtio_header_iomap);
+	this->pci_device->ioWrite8(this->deviceSpecificConfigStartHeaderOffset + offset, value_to_write, this->pci_virtio_header_iomap);
 }
 
-void VirtioLegacyPCIDevice::writeDeviceSpecificConfig32LETransitional(unsigned device_specific_offset, uint32_t value_to_write)
+void VirtioLegacyPCIDevice::writeDeviceConfig16Native(uint16_t offset, uint16_t value_to_write)
 {
-	this->pci_device->ioWrite32(this->deviceSpecificConfigStartHeaderOffset + device_specific_offset, value_to_write, this->pci_virtio_header_iomap);
+	this->pci_device->ioWrite16(this->deviceSpecificConfigStartHeaderOffset + offset, value_to_write, this->pci_virtio_header_iomap);
+}
+
+void VirtioLegacyPCIDevice::writeDeviceConfig32Native(uint16_t offset, uint32_t value_to_write)
+{
+	this->pci_device->ioWrite32(this->deviceSpecificConfigStartHeaderOffset + offset, value_to_write, this->pci_virtio_header_iomap);
+}
+
+void VirtioLegacyPCIDevice::writeDeviceConfig16LETransitional(uint16_t device_specific_offset, uint16_t value_to_write)
+{
+	this->writeDeviceConfig16Native(device_specific_offset, value_to_write);
+}
+
+void VirtioLegacyPCIDevice::writeDeviceConfig32LETransitional(uint16_t device_specific_offset, uint32_t value_to_write)
+{
+	this->writeDeviceConfig32Native(device_specific_offset, value_to_write);
 }
 
 
@@ -704,7 +693,7 @@ void returnUnusedDescriptor(VirtioVirtqueue* virtqueue, uint16_t descriptorIndex
 	virtqueue->first_unused_descriptor_index = descriptorIndex;
 }
 
-IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueue(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion)
+IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueue(uint16_t queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion)
 {
 	if(queue_index >= this->num_virtqueues)
 	{
@@ -724,7 +713,7 @@ IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueue(unsigned queue_index, I
 
 static void virtio_virtqueue_add_descriptor_to_ring(VirtioVirtqueue* queue, uint16_t first_descriptor_index);
 
-IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueueDirect(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion)
+IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueueDirect(uint16_t queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion)
 {
 	VirtioVirtqueue* queue = &this->virtqueues[queue_index].queue;
 	
@@ -890,7 +879,7 @@ static void virtio_virtqueue_add_descriptor_to_ring(VirtioVirtqueue* queue, uint
 struct virtio_output_indirect_segment_state
 {
 	VirtioVringDesc* desc_array;
-	unsigned next_descriptor_index;
+	uint16_t next_descriptor_index;
 	bool writable;
 };
 struct virtio_output_segment_for_indirect_descs_state
@@ -901,7 +890,7 @@ struct virtio_output_segment_for_indirect_descs_state
 
 static IOReturn generate_indirect_segment_dma(VirtioVirtqueue* queue, IODMACommand* dma_cmd, IOMemoryDescriptor* buf, unsigned& min_descs_required, UInt32& max_segments, virtio_output_indirect_segment_state* desc_output);
 
-IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueueIndirect(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion)
+IOReturn VirtioLegacyPCIDevice::submitBuffersToVirtqueueIndirect(uint16_t queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion)
 {
 	VirtioVirtqueue* queue = &this->virtqueues[queue_index].queue;
 	
@@ -1031,7 +1020,7 @@ bool VirtioLegacyPCIDevice::outputIndirectVringDescSegment(
 	IODMACommand* target, IODMACommand::Segment64 segment, void* segments, UInt32 segmentIndex)
 {
 	virtio_output_indirect_segment_state* state = static_cast<virtio_output_indirect_segment_state*>(segments);
-	unsigned index = state->next_descriptor_index;
+	uint16_t index = state->next_descriptor_index;
 	VirtioVringDesc* descriptor = &state->desc_array[index];
 	
 	fill_vring_descriptor(descriptor, index, index == 0 ? nullptr : &state->desc_array[index - 1], segment, state->writable);
@@ -1104,7 +1093,7 @@ static void fill_vring_descriptor(VirtioVringDesc* descriptor, int16_t descripto
 	descriptor->next = 0xffff;
 }
 
-unsigned VirtioLegacyPCIDevice::pollCompletedRequestsInVirtqueue(unsigned queue_index, unsigned completion_limit)
+unsigned VirtioLegacyPCIDevice::pollCompletedRequestsInVirtqueue(uint16_t queue_index, unsigned completion_limit)
 {
 	return this->processCompletedRequestsInVirtqueue(&this->virtqueues[queue_index].queue, completion_limit);
 }
@@ -1136,7 +1125,7 @@ unsigned VirtioLegacyPCIDevice::processCompletedRequestsInVirtqueue(VirtioVirtqu
 			uint32_t dequeuedDescriptor = virtqueue->used_ring->ring[item].descriptor_id;
 
 			VirtioCompletion completion = virtqueue->descriptor_buffers[dequeuedDescriptor].completion;
-			int16_t descriptorIndex = dequeuedDescriptor;
+			int16_t descriptorIndex = static_cast<uint16_t>(dequeuedDescriptor);
 			while (descriptorIndex >= 0)
 			{
 				int16_t next = virtqueue->descriptor_buffers[descriptorIndex].next_desc;

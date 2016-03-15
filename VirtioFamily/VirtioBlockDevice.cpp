@@ -168,7 +168,7 @@ bool VirtioBlockDevice::start(IOService* provider)
 	uint32_t seg_max = 0;
 	if (this->active_features & VirtioBlockDeviceFeatures::VIRTIO_BLK_F_SEG_MAX)
 	{
-		seg_max = virtio->readDeviceSpecificConfig32LE(CONFIG_SEG_MAX_OFFSET);
+		seg_max = virtio->readDeviceConfig32LE(CONFIG_SEG_MAX_OFFSET);
 	}
 	else
 	{
@@ -229,14 +229,14 @@ bool VirtioBlockDevice::start(IOService* provider)
 		{
 			VirtioBlockDevice* me = static_cast<VirtioBlockDevice*>(block_dev);
 			
-			uint64_t capacity = me->virtio_device->readDeviceSpecificConfig64LETransitional(CONFIG_CAPCITY_OFFSET);
+			uint64_t capacity = me->virtio_device->readDeviceConfig64LETransitional(CONFIG_CAPCITY_OFFSET);
 			me->capacity_in_bytes = capacity*512;
 			
-			uint32_t size_max = me->virtio_device->readDeviceSpecificConfig32LE(CONFIG_SIZE_MAX_OFFSET);
+			uint32_t size_max = me->virtio_device->readDeviceConfig32LE(CONFIG_SIZE_MAX_OFFSET);
 			uint32_t block_size = 512;
 			if(me->active_features & VirtioBlockDeviceFeatures::VIRTIO_BLK_F_BLK_SIZE)
 			{
-				block_size = me->virtio_device->readDeviceSpecificConfig32LE(CONFIG_BLK_SIZE_OFFSET);
+				block_size = me->virtio_device->readDeviceConfig32LE(CONFIG_BLK_SIZE_OFFSET);
 			}
 			
 			me->block_size = block_size;
@@ -280,8 +280,8 @@ void VirtioBlockDevice::deviceConfigChangeAction(OSObject* target, VirtioDevice*
 void VirtioBlockDevice::deviceConfigChangeAction(VirtioDevice* source)
 {
 /*
-	uint32_t num_pages = this->virtio_device->readDeviceSpecificConfig32LE(CONFIG_NUM_REQUESTED_PAGES_OFFSET);
-	uint32_t actual = this->virtio_device->readDeviceSpecificConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET);
+	uint32_t num_pages = this->virtio_device->readDeviceConfig32LE(CONFIG_NUM_REQUESTED_PAGES_OFFSET);
+	uint32_t actual = this->virtio_device->readDeviceConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET);
 	IOLog("VirtioMemBalloonDevice::deviceConfigChangeAction(): num_pages = %u, actual = %u\n", num_pages, actual);
 	this->inflateDeflateIfNecessary(num_pages);
 	*/

@@ -589,7 +589,7 @@ void PJVirtioNet::determineMACAddress()
 	{
 		for (unsigned i = 0; i < sizeof(mac_address); ++i)
 		{
-			mac_address.bytes[i] = virtio_dev->readDeviceSpecificConfig8(static_cast<unsigned>(offsetof(virtio_net_config, mac[i])));
+			mac_address.bytes[i] = virtio_dev->readDeviceConfig8(static_cast<unsigned>(offsetof(virtio_net_config, mac[i])));
 		}
 		PJLogVerbose("virtio-net start(): Determined MAC address: %02X:%02X:%02X:%02X:%02X:%02X\n",
 			mac_address.bytes[0], mac_address.bytes[1], mac_address.bytes[2],
@@ -656,7 +656,7 @@ IOReturn PJVirtioNet::getPacketFilters(const OSSymbol *group, UInt32 *filters) c
 int32_t PJVirtioNet::readStatus()
 {
 	if (!feature_status_field) return -1;
-	return this->virtio_dev->readDeviceSpecificConfig16Native(offsetof(virtio_net_config, status));
+	return this->virtio_dev->readDeviceConfig16Native(offsetof(virtio_net_config, status));
 }
 
 

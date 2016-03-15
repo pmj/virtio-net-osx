@@ -72,8 +72,8 @@ bool VirtioMemBalloonDevice::start(IOService* provider)
 		{
 			VirtioMemBalloonDevice* me = static_cast<VirtioMemBalloonDevice*>(mem_balloon);
 			
-			uint32_t num_pages = me->virtio_device->readDeviceSpecificConfig32LE(CONFIG_NUM_REQUESTED_PAGES_OFFSET);
-			uint32_t actual = me->virtio_device->readDeviceSpecificConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET);
+			uint32_t num_pages = me->virtio_device->readDeviceConfig32LE(CONFIG_NUM_REQUESTED_PAGES_OFFSET);
+			uint32_t actual = me->virtio_device->readDeviceConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET);
 			IOLog("VirtioMemBalloonDevice::start(): num_pages = %u, actual = %u\n", num_pages, actual);
 			me->inflateDeflateIfNecessary(num_pages);
 			return kIOReturnSuccess;
@@ -89,8 +89,8 @@ void VirtioMemBalloonDevice::deviceConfigChangeAction(OSObject* target, VirtioDe
 
 void VirtioMemBalloonDevice::deviceConfigChangeAction(VirtioDevice* source)
 {
-	uint32_t num_pages = this->virtio_device->readDeviceSpecificConfig32LE(CONFIG_NUM_REQUESTED_PAGES_OFFSET);
-	uint32_t actual = this->virtio_device->readDeviceSpecificConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET);
+	uint32_t num_pages = this->virtio_device->readDeviceConfig32LE(CONFIG_NUM_REQUESTED_PAGES_OFFSET);
+	uint32_t actual = this->virtio_device->readDeviceConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET);
 	IOLog("VirtioMemBalloonDevice::deviceConfigChangeAction(): num_pages = %u, actual = %u\n", num_pages, actual);
 	this->inflateDeflateIfNecessary(num_pages);
 }
@@ -288,10 +288,10 @@ void VirtioMemBalloonDevice::inflateRequestCompleted(bool device_reset)
 	}
 	
 	uint32_t total_pages_allocated = this->totalPagesAllocated();
-	this->virtio_device->writeDeviceSpecificConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET, total_pages_allocated);
+	this->virtio_device->writeDeviceConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET, total_pages_allocated);
 	
-	uint32_t num_pages = this->virtio_device->readDeviceSpecificConfig32LE(CONFIG_NUM_REQUESTED_PAGES_OFFSET);
-	uint32_t actual = this->virtio_device->readDeviceSpecificConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET);
+	uint32_t num_pages = this->virtio_device->readDeviceConfig32LE(CONFIG_NUM_REQUESTED_PAGES_OFFSET);
+	uint32_t actual = this->virtio_device->readDeviceConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET);
 	//IOLog("VirtioMemBalloonDevice::inflateRequestCompleted(): num_pages = %u, actual = %u\n", num_pages, actual);
 	this->inflateDeflateIfNecessary(num_pages);
 }
@@ -410,10 +410,10 @@ void VirtioMemBalloonDevice::deflateRequestCompleted(bool device_reset)
 	this->deflatingBuffers->flushCollection();
 	
 	uint32_t total_pages_allocated = this->totalPagesAllocated();
-	this->virtio_device->writeDeviceSpecificConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET, total_pages_allocated);
+	this->virtio_device->writeDeviceConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET, total_pages_allocated);
 	
-	uint32_t num_pages = this->virtio_device->readDeviceSpecificConfig32LE(CONFIG_NUM_REQUESTED_PAGES_OFFSET);
-	uint32_t actual = this->virtio_device->readDeviceSpecificConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET);
+	uint32_t num_pages = this->virtio_device->readDeviceConfig32LE(CONFIG_NUM_REQUESTED_PAGES_OFFSET);
+	uint32_t actual = this->virtio_device->readDeviceConfig32LE(CONFIG_ACTUAL_PAGES_OFFSET);
 	IOLog("VirtioMemBalloonDevice::deflateRequestCompleted(): num_pages = %u, actual = %u\n", num_pages, actual);
 	this->inflateDeflateIfNecessary(num_pages);
 }

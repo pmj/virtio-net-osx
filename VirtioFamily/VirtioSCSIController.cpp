@@ -127,20 +127,20 @@ bool VirtioSCSIController::InitializeController(void)
 	static const unsigned CONFIG_MAX_TARGET_OFFSET = 30;
 	static const unsigned CONFIG_MAX_LUN_OFFSET = 32;*/
 	
-	uint32_t num_queues = virtio->readDeviceSpecificConfig32LETransitional(CONFIG_NUM_QUEUES_OFFSET);
-	this->seg_max = virtio->readDeviceSpecificConfig32LETransitional(CONFIG_SEG_MAX_OFFSET);
-	this->max_sectors = virtio->readDeviceSpecificConfig32LETransitional(CONFIG_MAX_SECTORS_OFFSET);
-	uint32_t cmd_per_lun = virtio->readDeviceSpecificConfig32LETransitional(CONFIG_CMD_PER_LUN_OFFSET);
-	uint32_t event_info_size = virtio->readDeviceSpecificConfig32LETransitional(CONFIG_EVENT_INFO_SIZE_OFFSET);
-	uint32_t sense_size = virtio->readDeviceSpecificConfig32LETransitional(CONFIG_SENSE_SIZE_OFFSET);
-	uint32_t cdb_size = virtio->readDeviceSpecificConfig32LETransitional(CONFIG_CDB_SIZE_OFFSET);
-	uint16_t max_channel = virtio->readDeviceSpecificConfig16LETransitional(CONFIG_MAX_CHANNEL_OFFSET);
-	this->max_target = virtio->readDeviceSpecificConfig16LETransitional(CONFIG_MAX_TARGET_OFFSET);
-	this->max_lun = virtio->readDeviceSpecificConfig32LETransitional(CONFIG_MAX_LUN_OFFSET);
+	uint32_t num_queues = virtio->readDeviceConfig32LETransitional(CONFIG_NUM_QUEUES_OFFSET);
+	this->seg_max = virtio->readDeviceConfig32LETransitional(CONFIG_SEG_MAX_OFFSET);
+	this->max_sectors = virtio->readDeviceConfig32LETransitional(CONFIG_MAX_SECTORS_OFFSET);
+	uint32_t cmd_per_lun = virtio->readDeviceConfig32LETransitional(CONFIG_CMD_PER_LUN_OFFSET);
+	uint32_t event_info_size = virtio->readDeviceConfig32LETransitional(CONFIG_EVENT_INFO_SIZE_OFFSET);
+	uint32_t sense_size = virtio->readDeviceConfig32LETransitional(CONFIG_SENSE_SIZE_OFFSET);
+	uint32_t cdb_size = virtio->readDeviceConfig32LETransitional(CONFIG_CDB_SIZE_OFFSET);
+	uint16_t max_channel = virtio->readDeviceConfig16LETransitional(CONFIG_MAX_CHANNEL_OFFSET);
+	this->max_target = virtio->readDeviceConfig16LETransitional(CONFIG_MAX_TARGET_OFFSET);
+	this->max_lun = virtio->readDeviceConfig32LETransitional(CONFIG_MAX_LUN_OFFSET);
 
 
 	IOLog("VirtioSCSIController::InitializeController num_queues = %u \nseg_max = %u \nmax_sectors = %u \ncmd_per_lun = %u \nevent_info_size = %u \nsense_size = %u \ncdb_size = %u \nmax_channel = %u \nmax_target = %u \nmax_lun = %u \n", num_queues, seg_max, max_sectors, cmd_per_lun, event_info_size, sense_size, cdb_size, max_channel, this->max_target, this->max_lun);
-	virtio->writeDeviceSpecificConfig32LETransitional(CONFIG_CDB_SIZE_OFFSET, kSCSICDBSize_Maximum);
+	virtio->writeDeviceConfig32LETransitional(CONFIG_CDB_SIZE_OFFSET, kSCSICDBSize_Maximum);
 
 	unsigned queue_sizes[3] = {0,0,0};
 	unsigned request_queue_segs = 2 + seg_max;
@@ -597,7 +597,7 @@ static SCSILogicalUnitNumber virtio_scsi_lun_from_lun_bytes(SCSILogicalUnitBytes
 static void virtio_scsi_lun_bytes_from_target_lun(SCSILogicalUnitBytes* dest, SCSITargetIdentifier target, SCSILogicalUnitNumber lun)
 {
 	(*dest)[0] = 1;
-	(*dest)[1] = target;
+	(*dest)[1] = static_cast<uint8_t>(target);
 	(*dest)[2] = (lun >> 8) & 0xff;
 	(*dest)[3] = lun & 0xff;
 	bzero(&(*dest)[4], 4);

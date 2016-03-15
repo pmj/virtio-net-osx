@@ -40,7 +40,7 @@ public:
 	virtual void stop(IOService* provider) override;
 
 	virtual void endDeviceOperation();
-    virtual bool didTerminate( IOService * provider, IOOptionBits options, bool * defer ) override;
+	virtual bool didTerminate( IOService * provider, IOOptionBits options, bool * defer ) override;
 	
 	static void deviceConfigChangeAction(OSObject* target, VirtioDevice* source);
 	virtual void deviceConfigChangeAction(VirtioDevice* source);

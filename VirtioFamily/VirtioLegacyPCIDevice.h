@@ -29,7 +29,7 @@ protected:
 	struct VirtioLegacyPCIVirtqueue* virtqueues;
 	unsigned num_virtqueues;
 	bool eventIndexFeatureEnabled;
-	unsigned deviceSpecificConfigStartHeaderOffset;
+	uint16_t deviceSpecificConfigStartHeaderOffset;
 	ConfigChangeAction configChangeAction;
 	OSObject* configChangeTarget;
 	IOFilterInterruptEventSource* intr_event_source;
@@ -47,35 +47,40 @@ public:
 	virtual uint32_t supportedFeatures() override;
 	virtual bool requestFeatures(uint32_t use_features) override;
 	virtual void failDevice() override;
-	virtual IOReturn setupVirtqueues(unsigned number_queues, const bool queue_interrupts_enabled[] = nullptr, unsigned out_queue_sizes[] = nullptr, const unsigned indirect_desc_per_request[] = nullptr) override;
-	virtual IOReturn setVirtqueueInterruptsEnabled(unsigned queue_id, bool enabled) override;
+	virtual IOReturn setupVirtqueues(uint16_t number_queues, const bool queue_interrupts_enabled[] = nullptr, unsigned out_queue_sizes[] = nullptr, const unsigned indirect_desc_per_request[] = nullptr) override;
+	virtual IOReturn setVirtqueueInterruptsEnabled(uint16_t queue_id, bool enabled) override;
 	virtual void startDevice(ConfigChangeAction action = nullptr, OSObject* target = nullptr, IOWorkLoop* workloop = nullptr) override;
 	
 	virtual void closePCIDevice();
 
-	virtual IOReturn submitBuffersToVirtqueue(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion) override;
+	virtual IOReturn submitBuffersToVirtqueue(uint16_t queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion) override;
 	unsigned processCompletedRequestsInVirtqueue(VirtioVirtqueue* virtqueue, unsigned completion_limit);
-	virtual unsigned pollCompletedRequestsInVirtqueue(unsigned queue_index, unsigned completion_limit = 0) override;
+	virtual unsigned pollCompletedRequestsInVirtqueue(uint16_t queue_index, unsigned completion_limit = 0) override;
 	
-	virtual uint8_t readDeviceSpecificConfig8(unsigned device_specific_offset) override;
-	virtual uint16_t readDeviceSpecificConfig16LETransitional(unsigned device_specific_offset) override;
-	virtual uint32_t readDeviceSpecificConfig32LETransitional(unsigned device_specific_offset) override;
-	virtual uint64_t readDeviceSpecificConfig64LETransitional(unsigned device_specific_offset) override;
-	virtual uint16_t readDeviceSpecificConfig16LE(unsigned device_specific_offset) override;
-	virtual uint32_t readDeviceSpecificConfig32LE(unsigned device_specific_offset) override;
-	virtual uint64_t readDeviceSpecificConfig64LE(unsigned device_specific_offset) override;
-	virtual uint16_t readDeviceSpecificConfig16Native(unsigned device_specific_offset) override;
-	virtual uint32_t readDeviceSpecificConfig32Native(unsigned device_specific_offset) override;
-	virtual uint64_t readDeviceSpecificConfig64Native(unsigned device_specific_offset) override;
-	virtual void writeDeviceSpecificConfig32LE(unsigned device_specific_offset, uint32_t value_to_write) override;
-	virtual void writeDeviceSpecificConfig32LETransitional(unsigned device_specific_offset, uint32_t value_to_write) override;
+	virtual uint8_t readDeviceConfig8(uint16_t device_specific_offset) override;
+
+	virtual uint16_t readDeviceConfig16LETransitional(uint16_t device_specific_offset) override;
+	virtual uint32_t readDeviceConfig32LETransitional(uint16_t device_specific_offset) override;
+	virtual uint64_t readDeviceConfig64LETransitional(uint16_t device_specific_offset) override;
+
+	virtual uint16_t readDeviceConfig16Native(uint16_t device_specific_offset) override;
+	virtual uint32_t readDeviceConfig32Native(uint16_t device_specific_offset) override;
+	virtual uint64_t readDeviceConfig64Native(uint16_t device_specific_offset) override;
+
+	virtual void writeDeviceConfig8(uint16_t offset, uint8_t value_to_write) override;
+
+	virtual void writeDeviceConfig16Native(uint16_t offset, uint16_t value_to_write) override;
+	virtual void writeDeviceConfig32Native(uint16_t offset, uint32_t value_to_write) override;
+
+	virtual void writeDeviceConfig16LETransitional(uint16_t device_specific_offset, uint16_t value_to_write) override;
+	virtual void writeDeviceConfig32LETransitional(uint16_t device_specific_offset, uint32_t value_to_write) override;
 
 	virtual void stop(IOService* provider) override;
-    virtual bool didTerminate(IOService* provider, IOOptionBits options, bool* defer) override;
+	virtual bool didTerminate(IOService* provider, IOOptionBits options, bool* defer) override;
 
 #ifdef VIRTIO_LOG_TERMINATION
 	virtual bool requestTerminate(IOService * provider, IOOptionBits options) override;
-    virtual bool willTerminate(IOService * provider, IOOptionBits options) override;
+	virtual bool willTerminate(IOService * provider, IOOptionBits options) override;
 	virtual bool terminate(IOOptionBits options = 0) override;
 	virtual bool terminateClient(IOService * client, IOOptionBits options) override;
 #endif
@@ -86,9 +91,9 @@ public:
 	virtual void interruptAction(IOInterruptEventSource* source, int count);
 	virtual bool endHandlingInterrupts();
 
-    virtual IOWorkLoop* getWorkLoop() const override;
+	virtual IOWorkLoop* getWorkLoop() const override;
 private:
-	IOReturn setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, unsigned queue_id, bool interrupts_enabled, unsigned indirect_desc_per_request);
+	IOReturn setupVirtqueue(VirtioLegacyPCIVirtqueue* queue, uint16_t queue_id, bool interrupts_enabled, unsigned indirect_desc_per_request);
 	
 	
 	bool mapHeaderIORegion();
@@ -100,8 +105,8 @@ private:
 	static bool outputIndirectVringDescSegment(
 		IODMACommand* target, IODMACommand::Segment64 segment, void* segments, UInt32 segmentIndex);
 
-	IOReturn submitBuffersToVirtqueueDirect(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion);
-	IOReturn submitBuffersToVirtqueueIndirect(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion);
+	IOReturn submitBuffersToVirtqueueDirect(uint16_t queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion);
+	IOReturn submitBuffersToVirtqueueIndirect(uint16_t queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion);
 
 };
 

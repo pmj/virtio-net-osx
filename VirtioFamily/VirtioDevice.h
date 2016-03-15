@@ -38,29 +38,73 @@ public:
 	virtual uint32_t supportedFeatures() = 0;
 	virtual bool requestFeatures(uint32_t use_features) = 0;
 	virtual void failDevice() = 0;
-	virtual IOReturn setupVirtqueues(unsigned number_queues, const bool queue_interrupts_enabled[] = nullptr, unsigned out_queue_sizes[] = nullptr, const unsigned indirect_desc_per_request[] = nullptr) = 0;
-	virtual IOReturn setVirtqueueInterruptsEnabled(unsigned queue_id, bool enabled) = 0;
+
+	virtual IOReturn setupVirtqueues(uint16_t number_queues, const bool queue_interrupts_enabled[] = nullptr, unsigned out_queue_sizes[] = nullptr, const unsigned indirect_desc_per_request[] = nullptr) = 0;
+	virtual IOReturn setVirtqueueInterruptsEnabled(uint16_t queue_id, bool enabled) = 0;
 	
 	typedef void(*ConfigChangeAction)(OSObject* target, VirtioDevice* source);
 	virtual void startDevice(ConfigChangeAction action = nullptr, OSObject* target = nullptr, IOWorkLoop* workloop = nullptr) = 0;
 	
-	virtual IOReturn submitBuffersToVirtqueue(unsigned queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion) = 0;
-	virtual unsigned pollCompletedRequestsInVirtqueue(unsigned queue_index, unsigned completion_limit = 0) = 0;
+	virtual IOReturn submitBuffersToVirtqueue(uint16_t queue_index, IOMemoryDescriptor* device_readable_buf, IOMemoryDescriptor* device_writable_buf, VirtioCompletion completion) = 0;
+	virtual unsigned pollCompletedRequestsInVirtqueue(uint16_t queue_index, unsigned completion_limit = 0) = 0;
 	
-	virtual uint8_t readDeviceSpecificConfig8(unsigned device_specific_offset) = 0;
-	virtual uint16_t readDeviceSpecificConfig16LETransitional(unsigned device_specific_offset) = 0;
-	virtual uint32_t readDeviceSpecificConfig32LETransitional(unsigned device_specific_offset) = 0;
-	virtual uint64_t readDeviceSpecificConfig64LETransitional(unsigned device_specific_offset) = 0;
-	virtual uint16_t readDeviceSpecificConfig16LE(unsigned device_specific_offset) = 0;
-	virtual uint32_t readDeviceSpecificConfig32LE(unsigned device_specific_offset) = 0;
-	virtual uint64_t readDeviceSpecificConfig64LE(unsigned device_specific_offset) = 0;
-	virtual uint16_t readDeviceSpecificConfig16Native(unsigned device_specific_offset) = 0;
-	virtual uint32_t readDeviceSpecificConfig32Native(unsigned device_specific_offset) = 0;
-	virtual uint64_t readDeviceSpecificConfig64Native(unsigned device_specific_offset) = 0;
-	virtual void writeDeviceSpecificConfig32LE(unsigned device_specific_offset, uint32_t value_to_write) = 0;
-	virtual void writeDeviceSpecificConfig32LETransitional(unsigned device_specific_offset, uint32_t value_to_write) = 0;
+	virtual uint8_t readDeviceConfig8(uint16_t offset) = 0;
+
+	virtual uint16_t readDeviceConfig16Native(uint16_t offset) = 0;
+	virtual uint32_t readDeviceConfig32Native(uint16_t offset) = 0;
+	virtual uint64_t readDeviceConfig64Native(uint16_t offset) = 0;
+
+	// deliberately non-virtual so they compile away to native call on LE arches.
+	uint16_t readDeviceConfig16LE(uint16_t offset)
+	{ return OSSwapLittleToHostInt16(this->readDeviceConfig16Native(offset)); };
+	uint32_t readDeviceConfig32LE(uint16_t offset)
+	{ return OSSwapLittleToHostInt32(this->readDeviceConfig32Native(offset)); };
+	uint64_t readDeviceConfig64LE(uint16_t offset)
+	{ return OSSwapLittleToHostInt64(this->readDeviceConfig64Native(offset)); };
+
+	// Read fields which vary in endianness in legacy vs standardised devices.
+	virtual uint16_t readDeviceConfig16LETransitional(uint16_t offset) = 0;
+	virtual uint32_t readDeviceConfig32LETransitional(uint16_t offset) = 0;
+	virtual uint64_t readDeviceConfig64LETransitional(uint16_t offset) = 0;
+
+	virtual void writeDeviceConfig8(uint16_t offset, uint8_t value_to_write) = 0;
+
+	virtual void writeDeviceConfig16Native(uint16_t offset, uint16_t value_to_write) = 0;
+	virtual void writeDeviceConfig32Native(uint16_t offset, uint32_t value_to_write) = 0;
+
+	// deliberately non-virtual so they compile away to native call on LE arches.
+	void writeDeviceConfig16LE(uint16_t offset, uint16_t value)
+	{ this->writeDeviceConfig16Native(offset, OSSwapHostToLittleInt16(value)); };
+	void writeDeviceConfig32LE(uint16_t offset, uint32_t value)
+	{ this->writeDeviceConfig32Native(offset, OSSwapHostToLittleInt32(value)); };
+
+	virtual void writeDeviceConfig16LETransitional(uint16_t offset, uint16_t value_to_write) = 0;
+	virtual void writeDeviceConfig32LETransitional(uint16_t offset, uint32_t value_to_write) = 0;
 
 	uint32_t getVirtioDeviceType() { return virtio_device_type; }
+
+private:
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 0);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 1);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 2);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 3);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 4);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 5);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 6);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 7);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 8);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 9);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 10);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 11);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 12);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 13);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 14);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 15);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 16);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 17);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 18);
+	OSMetaClassDeclareReservedUnused(VirtioDevice, 19);
+
 };
 
 class IODMACommand;
