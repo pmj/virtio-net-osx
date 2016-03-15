@@ -223,11 +223,14 @@ void VirtioSCSIController::eventCompleted(OSObject* target, void* ref, bool devi
 	else
 	{
 		virtio_scsi_event* event = static_cast<virtio_scsi_event*>(eventBuffer->getBytesNoCopy());
-		IOLog("VirtioSCSIController::eventCompleted -> event\n");
+		IOLog("VirtioSCSIController::eventCompleted -> event (%u)\n", event->event);
 
 		if(event->event == VIRTIO_SCSI_T_TRANSPORT_RESET)
 		{
-			IOLog("VirtioSCSIController::eventCompleted -> event - device reset\n");
+			IOLog("VirtioSCSIController::eventCompleted -> event - transport reset, reason %u, lun %02x %02x %02x %02x  %02x %02x %02x %02x\n",
+				event->reason,
+				event->lun[0], event->lun[1], event->lun[2], event->lun[3],
+				event->lun[4], event->lun[5], event->lun[6], event->lun[7]);
 
 			if(event->reason == VIRTIO_SCSI_EVT_RESET_RESCAN)
 			{
@@ -329,8 +332,7 @@ bool VirtioSCSIController::DoesHBAPerformDeviceManagement(void)
 	{
 		//yes - return true we have to tell what devices available
 		IOLog("VirtioSCSIController::DoesHBAPerformDeviceManagement hotplug enabled\n");
-
-		return false;
+		return true;
 	}
 
 	IOLog("VirtioSCSIController::DoesHBAPerformDeviceManagement hotplug disabled\n");
@@ -355,6 +357,14 @@ bool VirtioSCSIController::DoesHBASupportSCSIParallelFeature (SCSIParallelFeatur
 bool VirtioSCSIController::StartController(void)
 {
 	IOLog("VirtioSCSIController::StartController\n");
+	
+	if (this->active_features & VirtioSCSIControllerFeatures::VIRTIO_SCSI_F_HOTPLUG)
+	{
+		for (unsigned i = 0; i < this->max_target; ++i)
+		{
+			this->CreateTargetForID(i);
+		}
+	}
 
 	return true;
 }
@@ -520,6 +530,7 @@ bool VirtioSCSIController::DoesHBAPerformAutoSense()
 }
 
 static const uint8_t VIRTIO_SCSI_S_OK = 0;
+static const uint8_t VIRTIO_SCSI_S_BAD_TARGET = 3;
 
 void VirtioSCSIController::parallelTaskCompleted(SCSIParallelTaskIdentifier parallelRequest, bool device_reset)
 {
@@ -551,9 +562,16 @@ void VirtioSCSIController::parallelTaskCompleted(SCSIParallelTaskIdentifier para
 				bytes_transferred = data_size - task->from_device.residual;
 			}
 		}
+		else if (response == VIRTIO_SCSI_S_BAD_TARGET)
+		{
+			kprintf("VirtioSCSIController::parallelTaskCompleted Error response is %u, status %u - target does not exist\n", response, completionStatus);
+			serviceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
+			completionStatus = kSCSITaskStatus_DeviceNotPresent;
+			this->DestroyTargetForID(this->GetTargetIdentifier(parallelRequest));
+		}
 		else
 		{
-			kprintf("VirtioSCSIController::parallelTaskCompleted Error response is %u\n", response);
+			kprintf("VirtioSCSIController::parallelTaskCompleted Error response is %u, status %u\n", response, completionStatus);
 			serviceResponse = kSCSIServiceResponse_SERVICE_DELIVERY_OR_TARGET_FAILURE;
 		}
 		this->SetRealizedDataTransferCount(parallelRequest, bytes_transferred);

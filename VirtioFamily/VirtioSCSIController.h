@@ -14,6 +14,7 @@
 
 #define VirtioSCSIController eu_dennis__jordan_driver_VirtioSCSIController
 
+class IOBufferMemoryDescriptor;
 struct virtio_scsi_management_task;
 class VirtioSCSIController : public IOSCSIParallelInterfaceController
 {
