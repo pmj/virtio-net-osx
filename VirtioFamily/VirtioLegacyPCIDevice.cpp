@@ -1226,7 +1226,7 @@ bool VirtioLegacyPCIDevice::beginHandlingInterrupts(IOWorkLoop* workloop)
 	if (msi_index >= 0)
 	{
 		intr_index = msi_index;
-		IOLog("VirtioLegacyPCIDevice beginHandlingInterrupts(): Enabled message signaled interrupts (index %d).\n", intr_index);
+		kprintf("VirtioLegacyPCIDevice beginHandlingInterrupts(): Enabled message signaled interrupts (index %d).\n", intr_index);
 	}
 	else
 	{
@@ -1243,6 +1243,7 @@ bool VirtioLegacyPCIDevice::beginHandlingInterrupts(IOWorkLoop* workloop)
 		{
 			// Device supports MSI-X. IOPCIFamily seems to have problems with this, so revert to legacy interrupts
 			intr_index = legacy_index;
+			kprintf("VirtioLegacyPCIDevice beginHandlingInterrupts(): Reverted from message signaled interrupts (index %d) to legacy due to problems with MSI-X.\n", intr_index);
 		}
 	}
 	
@@ -1250,6 +1251,7 @@ bool VirtioLegacyPCIDevice::beginHandlingInterrupts(IOWorkLoop* workloop)
 	if (!intr_event_source)
 	{
 		IOLog("VirtioLegacyPCIDevice beginHandlingInterrupts(): Error! %s interrupt event source failed.\n", intr_event_source ? "Initialising" : "Allocating");
+		kprintf("VirtioLegacyPCIDevice beginHandlingInterrupts(): Error! %s interrupt event source failed.\n", intr_event_source ? "Initialising" : "Allocating");
 		OSSafeReleaseNULL(intr_event_source);
 		return false;
 	}
