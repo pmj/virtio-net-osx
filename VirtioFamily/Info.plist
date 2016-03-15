@@ -35,19 +35,6 @@
 			<key>IOProbeScore</key>
 			<integer>120</integer>
 		</dict>
-		<key>VirtioPCI</key>
-		<dict>
-			<key>CFBundleIdentifier</key>
-			<string>eu.dennis-jordan.driver.$(PRODUCT_NAME:rfc1034identifier)</string>
-			<key>IOClass</key>
-			<string>eu_dennis__jordan_driver_VirtioPCIDevice</string>
-			<key>IOPCIPrimaryMatch</key>
-			<string>0x10001AF4&amp;0xffc0ffff</string>
-			<key>IOProviderClass</key>
-			<string>IOPCIDevice</string>
-			<key>IOProbeScore</key>
-			<integer>150</integer>
-		</dict>
 		<key>VirtioMemBallonController</key>
 		<dict>
 			<key>CFBundleIdentifier</key>
@@ -55,7 +42,7 @@
 			<key>IOClass</key>
 			<string>eu_dennis__jordan_driver_VirtioMemBalloonDevice</string>
 			<key>IOProviderClass</key>
-			<string>eu_dennis__jordan_driver_VirtioLegacyPCIDevice</string>
+			<string>eu_dennis__jordan_driver_VirtioDevice</string>
 			<key>VirtioDeviceTypeID</key>
 			<integer>5</integer>
 		</dict>
@@ -66,33 +53,9 @@
 			<key>IOClass</key>
 			<string>eu_dennis__jordan_driver_VirtioBlockDevice</string>
 			<key>IOProviderClass</key>
-			<string>eu_dennis__jordan_driver_VirtioLegacyPCIDevice</string>
+			<string>eu_dennis__jordan_driver_VirtioDevice</string>
 			<key>VirtioDeviceTypeID</key>
 			<integer>2</integer>
-		</dict>
-		<key>VirtioEthernetController</key>
-		<dict>
-			<key>CFBundleIdentifier</key>
-			<string>eu.dennis-jordan.driver.$(PRODUCT_NAME:rfc1034identifier)</string>
-			<key>IOClass</key>
-			<string>eu_dennis__jordan_driver_VirtioEthernetController</string>
-			<key>IOProviderClass</key>
-			<string>eu_dennis__jordan_driver_VirtioLegacyPCIDevice</string>
-			<key>VirtioDeviceTypeID</key>
-			<integer>1</integer>
-			<key>VirtioRequiredFeatures</key>
-			<integer>32</integer>
-		</dict>
-		<key>VirtioNetworkController</key>
-		<dict>
-			<key>CFBundleIdentifier</key>
-			<string>eu.dennis-jordan.driver.$(PRODUCT_NAME:rfc1034identifier)</string>
-			<key>IOClass</key>
-			<string>eu_dennis__jordan_driver_VirtioNetworkDevice</string>
-			<key>IOProviderClass</key>
-			<string>eu_dennis__jordan_driver_VirtioLegacyPCIDevice</string>
-			<key>VirtioDeviceTypeID</key>
-			<integer>1</integer>
 		</dict>
 		<key>VirtioSCSIController</key>
 		<dict>
@@ -101,7 +64,7 @@
 			<key>IOClass</key>
 			<string>eu_dennis__jordan_driver_VirtioSCSIController</string>
 			<key>IOProviderClass</key>
-			<string>eu_dennis__jordan_driver_VirtioLegacyPCIDevice</string>
+			<string>eu_dennis__jordan_driver_VirtioDevice</string>
 			<key>VirtioDeviceTypeID</key>
 			<integer>8</integer>
 			<key>IOMaximumSegmentByteCountRead</key>
@@ -113,13 +76,13 @@
 	<key>OSBundleLibraries</key>
 	<dict>
 		<key>com.apple.kpi.iokit</key>
-		<string>10.0</string>
+		<string>12.0</string>
 		<key>com.apple.kpi.libkern</key>
-		<string>10.0</string>
+		<string>12.0</string>
 		<key>com.apple.iokit.IOPCIFamily</key>
 		<string>2.0</string>
 		<key>com.apple.kpi.mach</key>
-		<string>10.0</string>
+		<string>12.0</string>
 		<key>com.apple.iokit.IOStorageFamily</key>
 		<string>1.0</string>
 		<key>com.apple.iokit.IOSCSIParallelFamily</key>
