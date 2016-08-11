@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<installer-gui-script minSpecVersion="1">
+    <options require-scripts="true" customize="never" />
+    <script>
+    <![CDATA[
+    function sle_required()
+    {
+        if (!my.target || !my.target.systemVersion)
+            return true;
+        var version = my.target.systemVersion.ProductVersion;
+        system.log("sle_required()");
+        system.log("my.target.systemVersion = " + version);
+        var ver_matches = /^(\d+)\.(\d+)(?:$|\.)/.exec(version);
+        if (ver_matches === null)
+            return false;
+        
+        var major = parseInt(ver_matches[1], 10);
+        var minor = parseInt(ver_matches[2], 10);
+        system.log("major = " + major + ", minor = " + minor);
+        // No need to install to SLE on 10.9 or newer
+        if (major > 10 || (major == 10 && minor >= 9))
+        {
+            system.log("Install to /System/Library/Extensions not required");
+            return false;
+        }
+        else
+        {
+            return true;
+        }
+    }
+    ]]>
+    </script>
+    <volume-check>
+      <allowed-os-versions>
+        <os-version min="10.8" />
+      </allowed-os-versions>
+    </volume-check>
+
+    <title>Virtio Family Drivers for OS X</title>
+    <readme file="readme.rtf" mime-type="text/rtf" />
+    <license file="license.rtf" mime-type="text/rtf" />
+
+    <pkg-ref id="eu.dennis-jordan.virtiofamily.libext"/>
+    <pkg-ref id="eu.dennis-jordan.virtiofamily.syslibext"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="eu.dennis-jordan.virtiofamily.libext"/>
+            <line choice="eu.dennis-jordan.virtiofamily.syslibext"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="eu.dennis-jordan.virtiofamily.libext" visible="false">
+        <pkg-ref id="eu.dennis-jordan.virtiofamily.libext"/>
+    </choice>
+    <pkg-ref id="eu.dennis-jordan.virtiofamily.libext" version="0.9.1" onConclusion="none">VirtioFamilyKextLE.pkg</pkg-ref>
+    <choice id="eu.dennis-jordan.virtiofamily.syslibext" visible="false" enabled="sle_required()" selected="sle_required()">
+        <pkg-ref id="eu.dennis-jordan.virtiofamily.syslibext"/>
+    </choice>
+    <pkg-ref id="eu.dennis-jordan.virtiofamily.syslibext" version="0.9.1" onConclusion="none" active="sle_required()">VirtioFamilyKextSLE.pkg</pkg-ref>
+</installer-gui-script>

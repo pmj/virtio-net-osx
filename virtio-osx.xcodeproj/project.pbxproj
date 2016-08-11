@@ -6,11 +6,55 @@
 	objectVersion = 46;
 	objects = {
 
+/* Begin PBXAggregateTarget section */
+		2974DBC61C988CC700413303 /* VirtioFamilyKextLEPackage */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = 2974DBC71C988CC800413303 /* Build configuration list for PBXAggregateTarget "VirtioFamilyKextLEPackage" */;
+			buildPhases = (
+				2974DBCC1C9891AC00413303 /* CopyFiles */,
+				2974DBCE1C9891D400413303 /* ShellScript */,
+			);
+			dependencies = (
+				2974DBCB1C98919800413303 /* PBXTargetDependency */,
+			);
+			name = VirtioFamilyKextLEPackage;
+			productName = VirtioFamilyKextLEPackage;
+		};
+		2974DBCF1C98928600413303 /* VirtioFamilyKextSLEPackage */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = 2974DBD01C98928600413303 /* Build configuration list for PBXAggregateTarget "VirtioFamilyKextSLEPackage" */;
+			buildPhases = (
+				2974DBD61C98929100413303 /* CopyFiles */,
+				2974DBD51C98928F00413303 /* ShellScript */,
+			);
+			dependencies = (
+				2974DBD41C98928C00413303 /* PBXTargetDependency */,
+			);
+			name = VirtioFamilyKextSLEPackage;
+			productName = VirtioFamilyKextSLEPackage;
+		};
+		2974DBD81C98931100413303 /* VirtioFamilyInstaller */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = 2974DBD91C98931100413303 /* Build configuration list for PBXAggregateTarget "VirtioFamilyInstaller" */;
+			buildPhases = (
+				2974DBE01C98932300413303 /* ShellScript */,
+			);
+			dependencies = (
+				2974DBDF1C98931A00413303 /* PBXTargetDependency */,
+				2974DBDD1C98931700413303 /* PBXTargetDependency */,
+			);
+			name = VirtioFamilyInstaller;
+			productName = VirtioFamilyInstaller;
+		};
+/* End PBXAggregateTarget section */
+
 /* Begin PBXBuildFile section */
 		294EC538186CCC1D0079686B /* PJMbufMemoryDescriptor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 294EC536186CCC1D0079686B /* PJMbufMemoryDescriptor.cpp */; };
 		294EC539186CCC1D0079686B /* PJMbufMemoryDescriptor.h in Headers */ = {isa = PBXBuildFile; fileRef = 294EC537186CCC1D0079686B /* PJMbufMemoryDescriptor.h */; };
 		294EC53C186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 294EC53A186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.cpp */; };
 		294EC53D186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.h in Headers */ = {isa = PBXBuildFile; fileRef = 294EC53B186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.h */; };
+		2974DBCD1C9891C800413303 /* VirtioFamily.kext in CopyFiles */ = {isa = PBXBuildFile; fileRef = D3D41D2D1AB84E470021F71A /* VirtioFamily.kext */; };
+		2974DBE61C989FD300413303 /* VirtioFamily.kext in CopyFiles */ = {isa = PBXBuildFile; fileRef = D3D41D2D1AB84E470021F71A /* VirtioFamily.kext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		298A5AC413F2BDEE00348079 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 298A5AC313F2BDED00348079 /* LICENSE */; };
 		299F18F313DC183D000200A5 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 299F18F113DC183D000200A5 /* InfoPlist.strings */; };
 		299F18F613DC183D000200A5 /* virtio_net.h in Headers */ = {isa = PBXBuildFile; fileRef = 299F18F513DC183D000200A5 /* virtio_net.h */; };
@@ -40,6 +84,60 @@
 		D3E6DCE41AC5A231002443CE /* VirtioNetworkDevice.h in Headers */ = {isa = PBXBuildFile; fileRef = D3E6DCE21AC5A231002443CE /* VirtioNetworkDevice.h */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		2974DBCA1C98919800413303 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 299F18DE13DC183D000200A5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D3D41D2C1AB84E470021F71A;
+			remoteInfo = VirtioFamily;
+		};
+		2974DBD31C98928C00413303 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 299F18DE13DC183D000200A5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D3D41D2C1AB84E470021F71A;
+			remoteInfo = VirtioFamily;
+		};
+		2974DBDC1C98931700413303 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 299F18DE13DC183D000200A5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2974DBC61C988CC700413303;
+			remoteInfo = VirtioFamilyKextLEPackage;
+		};
+		2974DBDE1C98931A00413303 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 299F18DE13DC183D000200A5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2974DBCF1C98928600413303;
+			remoteInfo = VirtioFamilyKextSLEPackage;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		2974DBCC1C9891AC00413303 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = KextLEPackageContents/Library/Extensions;
+			dstSubfolderSpec = 16;
+			files = (
+				2974DBCD1C9891C800413303 /* VirtioFamily.kext in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2974DBD61C98929100413303 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = KextSLEPackageContents/System/Library/Extensions;
+			dstSubfolderSpec = 16;
+			files = (
+				2974DBE61C989FD300413303 /* VirtioFamily.kext in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		294EC536186CCC1D0079686B /* PJMbufMemoryDescriptor.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = PJMbufMemoryDescriptor.cpp; sourceTree = "<group>"; };
 		294EC537186CCC1D0079686B /* PJMbufMemoryDescriptor.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PJMbufMemoryDescriptor.h; sourceTree = "<group>"; };
@@ -47,6 +145,9 @@
 		294EC53B186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SSDCMultiSubrangeMemoryDescriptor.h; sourceTree = "<group>"; };
 		294EC53F186D0EC20079686B /* virtio_net_classes.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = virtio_net_classes.h; sourceTree = "<group>"; };
 		294EC540186D114D0079686B /* pj_name_prefix.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = pj_name_prefix.h; sourceTree = "<group>"; };
+		2974DBE21C9894A300413303 /* distribution.xml */ = {isa = PBXFileReference; indentWidth = 4; lastKnownFileType = text.xml; path = distribution.xml; sourceTree = "<group>"; tabWidth = 4; usesTabs = 0; };
+		2974DBE41C989A5700413303 /* license.rtf */ = {isa = PBXFileReference; lastKnownFileType = text.rtf; path = license.rtf; sourceTree = "<group>"; };
+		2974DBE51C989A5700413303 /* readme.rtf */ = {isa = PBXFileReference; lastKnownFileType = text.rtf; path = readme.rtf; sourceTree = "<group>"; };
 		298A5AC313F2BDED00348079 /* LICENSE */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
 		299F18E913DC183D000200A5 /* virtio-net.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "virtio-net.kext"; sourceTree = BUILT_PRODUCTS_DIR; };
 		299F18ED13DC183D000200A5 /* Kernel.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Kernel.framework; path = System/Library/Frameworks/Kernel.framework; sourceTree = SDKROOT; };
@@ -102,12 +203,31 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		2974DBE11C9894A300413303 /* installer */ = {
+			isa = PBXGroup;
+			children = (
+				2974DBE31C9898C400413303 /* resources */,
+				2974DBE21C9894A300413303 /* distribution.xml */,
+			);
+			path = installer;
+			sourceTree = "<group>";
+		};
+		2974DBE31C9898C400413303 /* resources */ = {
+			isa = PBXGroup;
+			children = (
+				2974DBE41C989A5700413303 /* license.rtf */,
+				2974DBE51C989A5700413303 /* readme.rtf */,
+			);
+			path = resources;
+			sourceTree = "<group>";
+		};
 		299F18DC13DC183D000200A5 = {
 			isa = PBXGroup;
 			children = (
 				299F18EE13DC183D000200A5 /* virtio-net */,
 				D3D41D2E1AB84E470021F71A /* VirtioFamily */,
 				D395DCC91ACAD4C400C4EE18 /* lib */,
+				2974DBE11C9894A300413303 /* installer */,
 				299F18EB13DC183D000200A5 /* Frameworks */,
 				299F18EA13DC183D000200A5 /* Products */,
 			);
@@ -303,6 +423,15 @@
 			attributes = {
 				LastUpgradeCheck = 0420;
 				TargetAttributes = {
+					2974DBC61C988CC700413303 = {
+						CreatedOnToolsVersion = 6.3.2;
+					};
+					2974DBCF1C98928600413303 = {
+						CreatedOnToolsVersion = 6.3.2;
+					};
+					2974DBD81C98931100413303 = {
+						CreatedOnToolsVersion = 6.3.2;
+					};
 					D3D41D2C1AB84E470021F71A = {
 						CreatedOnToolsVersion = 6.2;
 					};
@@ -322,6 +451,9 @@
 			targets = (
 				299F18E813DC183D000200A5 /* virtio-net */,
 				D3D41D2C1AB84E470021F71A /* VirtioFamily */,
+				2974DBC61C988CC700413303 /* VirtioFamilyKextLEPackage */,
+				2974DBCF1C98928600413303 /* VirtioFamilyKextSLEPackage */,
+				2974DBD81C98931100413303 /* VirtioFamilyInstaller */,
 			);
 		};
 /* End PBXProject section */
@@ -356,6 +488,53 @@
 		};
 /* End PBXRezBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		2974DBCE1C9891D400413303 /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			outputPaths = (
+				"$(CONFIGURATION_BUILD_DIR)/VirtioFamilyKextLE.pkg",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "pkgbuild \\\n  --root \"${CONFIGURATION_BUILD_DIR}/KextLEPackageContents/\" \\\n  --identifier eu.dennis-jordan.virtiofamily.libext \\\n  --version \"0.9.1\" \\\n  \"${CONFIGURATION_BUILD_DIR}/VirtioFamilyKextLE.pkg\"\n";
+			showEnvVarsInLog = 0;
+		};
+		2974DBD51C98928F00413303 /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			outputPaths = (
+				"$(CONFIGURATION_BUILD_DIR)/VirtioFamilyKextSLE.pkg",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "pkgbuild \\\n  --root \"${CONFIGURATION_BUILD_DIR}/KextSLEPackageContents/\" \\\n  --identifier eu.dennis-jordan.virtiofamily.syslibext \\\n  --version \"0.9.1\" \\\n  \"${CONFIGURATION_BUILD_DIR}/VirtioFamilyKextSLE.pkg\"\n";
+			showEnvVarsInLog = 0;
+		};
+		2974DBE01C98932300413303 /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/VirtioFamily.pkg",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "mkdir -p \"${DERIVED_FILE_DIR}\"\n\nproductbuild \\\n  --distribution \"${SRCROOT}/installer/distribution.xml\" \\\n  --package-path \"${CONFIGURATION_BUILD_DIR}/\" \\\n  --version \"0.9.1\" \\\n  --resources \"${SRCROOT}/installer/resources/\" \\\n  \"${DERIVED_FILE_DIR}/VirtioFamily-unsigned.pkg\"\n\nproductsign --sign \"Developer ID Installer\" \"${DERIVED_FILE_DIR}/VirtioFamily-unsigned.pkg\" \"${BUILT_PRODUCTS_DIR}/VirtioFamily.pkg\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		299F18E313DC183D000200A5 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -385,6 +564,29 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		2974DBCB1C98919800413303 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D3D41D2C1AB84E470021F71A /* VirtioFamily */;
+			targetProxy = 2974DBCA1C98919800413303 /* PBXContainerItemProxy */;
+		};
+		2974DBD41C98928C00413303 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D3D41D2C1AB84E470021F71A /* VirtioFamily */;
+			targetProxy = 2974DBD31C98928C00413303 /* PBXContainerItemProxy */;
+		};
+		2974DBDD1C98931700413303 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2974DBC61C988CC700413303 /* VirtioFamilyKextLEPackage */;
+			targetProxy = 2974DBDC1C98931700413303 /* PBXContainerItemProxy */;
+		};
+		2974DBDF1C98931A00413303 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2974DBCF1C98928600413303 /* VirtioFamilyKextSLEPackage */;
+			targetProxy = 2974DBDE1C98931A00413303 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin PBXVariantGroup section */
 		299F18F113DC183D000200A5 /* InfoPlist.strings */ = {
 			isa = PBXVariantGroup;
@@ -397,6 +599,48 @@
 /* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
+		2974DBC81C988CC800413303 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		2974DBC91C988CC800413303 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+		2974DBD11C98928600413303 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		2974DBD21C98928600413303 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+		2974DBDA1C98931100413303 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		2974DBDB1C98931100413303 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
 		299F18F913DC183D000200A5 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -409,9 +653,9 @@
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.5;
+				MACOSX_DEPLOYMENT_TARGET = 10.8;
 				ONLY_ACTIVE_ARCH = NO;
-				SDKROOT = macosx10.9;
+				SDKROOT = macosx;
 			};
 			name = Debug;
 		};
@@ -425,8 +669,8 @@
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 10.5;
-				SDKROOT = macosx10.9;
+				MACOSX_DEPLOYMENT_TARGET = 10.8;
+				SDKROOT = macosx;
 			};
 			name = Release;
 		};
@@ -471,7 +715,6 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
-				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_WARN_BOOL_CONVERSION = YES;
@@ -500,7 +743,6 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				INFOPLIST_FILE = VirtioFamily/Info.plist;
-				MACOSX_DEPLOYMENT_TARGET = 10.9;
 				MODULE_NAME = "eu.dennis-jordan.driver.VirtioFamily";
 				MODULE_VERSION = 0.9b1;
 				MTL_ENABLE_DEBUG_INFO = YES;
@@ -515,7 +757,6 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
-				CLANG_CXX_LIBRARY = "libc++";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_WARN_BOOL_CONVERSION = YES;
@@ -540,7 +781,6 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				INFOPLIST_FILE = VirtioFamily/Info.plist;
-				MACOSX_DEPLOYMENT_TARGET = 10.9;
 				MODULE_NAME = "eu.dennis-jordan.driver.VirtioFamily";
 				MODULE_VERSION = 0.9b1;
 				MTL_ENABLE_DEBUG_INFO = NO;
@@ -552,6 +792,33 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		2974DBC71C988CC800413303 /* Build configuration list for PBXAggregateTarget "VirtioFamilyKextLEPackage" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2974DBC81C988CC800413303 /* Debug */,
+				2974DBC91C988CC800413303 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		2974DBD01C98928600413303 /* Build configuration list for PBXAggregateTarget "VirtioFamilyKextSLEPackage" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2974DBD11C98928600413303 /* Debug */,
+				2974DBD21C98928600413303 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		2974DBD91C98931100413303 /* Build configuration list for PBXAggregateTarget "VirtioFamilyInstaller" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2974DBDA1C98931100413303 /* Debug */,
+				2974DBDB1C98931100413303 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		299F18E113DC183D000200A5 /* Build configuration list for PBXProject "virtio-osx" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

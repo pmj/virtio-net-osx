@@ -6,11 +6,13 @@
 //
 //
 
+#define __STDC_LIMIT_MACROS
 #include "VirtioLegacyPCIDevice.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IODMACommand.h>
+#include <stdint.h>
 
 OSDefineMetaClassAndStructors(VirtioLegacyPCIDevice, VirtioDevice);
 
