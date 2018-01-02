@@ -61,6 +61,11 @@
 		299F18F813DC183D000200A5 /* virtio_net.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 299F18F713DC183D000200A5 /* virtio_net.cpp */; };
 		29A7E26213E2DC0B00E33939 /* virtio_ring.h in Headers */ = {isa = PBXBuildFile; fileRef = 29A7E26113E2DC0B00E33939 /* virtio_ring.h */; };
 		29CD526E13DD86D40062DAA6 /* readme.md in Resources */ = {isa = PBXBuildFile; fileRef = 29CD526D13DD86D40062DAA6 /* readme.md */; };
+		4A2852141FFBD6B50029548B /* ioreturn_strings.h in Headers */ = {isa = PBXBuildFile; fileRef = 4A2852121FFBD6B50029548B /* ioreturn_strings.h */; };
+		4A2852171FFBD6D20029548B /* iopcidevice_helpers.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4A2852151FFBD6D20029548B /* iopcidevice_helpers.cpp */; };
+		4A2852181FFBD6D20029548B /* iopcidevice_helpers.hpp in Headers */ = {isa = PBXBuildFile; fileRef = 4A2852161FFBD6D20029548B /* iopcidevice_helpers.hpp */; };
+		4A2852191FFBD87E0029548B /* ioreturn_strings.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4A2852111FFBD6B50029548B /* ioreturn_strings.cpp */; };
+		4A66B4EF1FF909F600BA48BA /* VirtioPCIDevice.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D3D41D3C1AB86AA10021F71A /* VirtioPCIDevice.cpp */; };
 		D36B0C871AE6566100EB445E /* VirtioSCSIController.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D36B0C851AE6566100EB445E /* VirtioSCSIController.cpp */; };
 		D36B0C881AE6566100EB445E /* VirtioSCSIController.h in Headers */ = {isa = PBXBuildFile; fileRef = D36B0C861AE6566100EB445E /* VirtioSCSIController.h */; };
 		D395DCC71AC96F0C00C4EE18 /* VirtioBlockDevice.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D395DCC51AC96F0C00C4EE18 /* VirtioBlockDevice.cpp */; };
@@ -158,6 +163,10 @@
 		299F18F713DC183D000200A5 /* virtio_net.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = virtio_net.cpp; sourceTree = "<group>"; };
 		29A7E26113E2DC0B00E33939 /* virtio_ring.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = virtio_ring.h; sourceTree = "<group>"; };
 		29CD526D13DD86D40062DAA6 /* readme.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; name = readme.md; path = ../readme.md; sourceTree = "<group>"; };
+		4A2852111FFBD6B50029548B /* ioreturn_strings.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ioreturn_strings.cpp; sourceTree = "<group>"; };
+		4A2852121FFBD6B50029548B /* ioreturn_strings.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ioreturn_strings.h; sourceTree = "<group>"; };
+		4A2852151FFBD6D20029548B /* iopcidevice_helpers.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = iopcidevice_helpers.cpp; sourceTree = "<group>"; };
+		4A2852161FFBD6D20029548B /* iopcidevice_helpers.hpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.h; path = iopcidevice_helpers.hpp; sourceTree = "<group>"; };
 		D36B0C851AE6566100EB445E /* VirtioSCSIController.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = VirtioSCSIController.cpp; sourceTree = "<group>"; };
 		D36B0C861AE6566100EB445E /* VirtioSCSIController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = VirtioSCSIController.h; sourceTree = "<group>"; };
 		D395DCC51AC96F0C00C4EE18 /* VirtioBlockDevice.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = VirtioBlockDevice.cpp; sourceTree = "<group>"; };
@@ -287,9 +296,21 @@
 			name = "Supporting Files";
 			sourceTree = "<group>";
 		};
+		4A2852101FFBD6A00029548B /* kextgizmos */ = {
+			isa = PBXGroup;
+			children = (
+				4A2852111FFBD6B50029548B /* ioreturn_strings.cpp */,
+				4A2852121FFBD6B50029548B /* ioreturn_strings.h */,
+				4A2852151FFBD6D20029548B /* iopcidevice_helpers.cpp */,
+				4A2852161FFBD6D20029548B /* iopcidevice_helpers.hpp */,
+			);
+			path = kextgizmos;
+			sourceTree = "<group>";
+		};
 		D395DCC91ACAD4C400C4EE18 /* lib */ = {
 			isa = PBXGroup;
 			children = (
+				4A2852101FFBD6A00029548B /* kextgizmos */,
 				D395DCCA1ACAD4C800C4EE18 /* genccont */,
 			);
 			path = lib;
@@ -352,6 +373,7 @@
 				299F18F613DC183D000200A5 /* virtio_net.h in Headers */,
 				29A7E26213E2DC0B00E33939 /* virtio_ring.h in Headers */,
 				294EC539186CCC1D0079686B /* PJMbufMemoryDescriptor.h in Headers */,
+				4A2852141FFBD6B50029548B /* ioreturn_strings.h in Headers */,
 				294EC53D186D0DC00079686B /* SSDCMultiSubrangeMemoryDescriptor.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -360,6 +382,7 @@
 			isa = PBXHeadersBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4A2852181FFBD6D20029548B /* iopcidevice_helpers.hpp in Headers */,
 				D395DCD41ACAD4F200C4EE18 /* util.h in Headers */,
 				D395DCD31ACAD4F200C4EE18 /* slist.h in Headers */,
 				D3E6DCE41AC5A231002443CE /* VirtioNetworkDevice.h in Headers */,
@@ -432,8 +455,13 @@
 					2974DBD81C98931100413303 = {
 						CreatedOnToolsVersion = 6.3.2;
 					};
+					299F18E813DC183D000200A5 = {
+						ProvisioningStyle = Manual;
+					};
 					D3D41D2C1AB84E470021F71A = {
 						CreatedOnToolsVersion = 6.2;
+						DevelopmentTeam = PLT8TQHCAJ;
+						ProvisioningStyle = Manual;
 					};
 				};
 			};
@@ -551,13 +579,16 @@
 			buildActionMask = 2147483647;
 			files = (
 				D395DCC71AC96F0C00C4EE18 /* VirtioBlockDevice.cpp in Sources */,
+				4A2852171FFBD6D20029548B /* iopcidevice_helpers.cpp in Sources */,
 				D395DCD01ACAD4F200C4EE18 /* slist_queue.c in Sources */,
 				D36B0C871AE6566100EB445E /* VirtioSCSIController.cpp in Sources */,
+				4A66B4EF1FF909F600BA48BA /* VirtioPCIDevice.cpp in Sources */,
 				D3A434B01ACAF57800EE7F73 /* SSDCMultiSubrangeMemoryDescriptor.cpp in Sources */,
 				D3D41D3A1AB860CC0021F71A /* VirtioLegacyPCIDevice.cpp in Sources */,
 				D3D41D461ABC386B0021F71A /* VirtioDevice.cpp in Sources */,
 				D3D41D421ABB4D4D0021F71A /* VirtioMemBalloonDevice.cpp in Sources */,
 				D395DCD21ACAD4F200C4EE18 /* slist.c in Sources */,
+				4A2852191FFBD87E0029548B /* ioreturn_strings.cpp in Sources */,
 				D3D41D341AB84E470021F71A /* VirtioFamily.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -680,6 +711,7 @@
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 0.9.4b3;
+				DEVELOPMENT_TEAM = "";
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_ENABLE_OBJC_EXCEPTIONS = YES;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
@@ -699,6 +731,7 @@
 				COPY_PHASE_STRIP = YES;
 				CURRENT_PROJECT_VERSION = 0.9.4b3;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
 				GCC_ENABLE_OBJC_EXCEPTIONS = YES;
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = "virtio-net/virtio-net-Prefix.pch";
@@ -716,7 +749,6 @@
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
 				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_WARN_BOOL_CONVERSION = YES;
 				CLANG_WARN_CONSTANT_CONVERSION = YES;
 				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
@@ -730,6 +762,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 0.9b1;
+				DEVELOPMENT_TEAM = PLT8TQHCAJ;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_PREFIX_HEADER = VirtioFamily/VirtioFamily.h;
@@ -748,6 +781,7 @@
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx10.9;
 				WRAPPER_EXTENSION = kext;
 			};
 			name = Debug;
@@ -758,7 +792,6 @@
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
 				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_WARN_BOOL_CONVERSION = YES;
 				CLANG_WARN_CONSTANT_CONVERSION = YES;
 				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
@@ -773,6 +806,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 0.9b1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = PLT8TQHCAJ;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_PREFIX_HEADER = VirtioFamily/VirtioFamily.h;
@@ -785,6 +819,7 @@
 				MODULE_VERSION = 0.9b1;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx10.9;
 				WRAPPER_EXTENSION = kext;
 			};
 			name = Release;

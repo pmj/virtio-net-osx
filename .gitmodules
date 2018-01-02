@@ -1,3 +1,6 @@
 [submodule "lib/genccont"]
 	path = lib/genccont
 	url = https://github.com/pmj/genccont.git
+[submodule "lib/kextgizmos"]
+	path = lib/kextgizmos
+	url = ssh://git@bitbucket.dennis-jordan.eu:7999/cp/kextgizmos.git
