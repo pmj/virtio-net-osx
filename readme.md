@@ -9,7 +9,7 @@ In VirtualBox, this device is known as the "Paravirtualised Network (virtio-net)
 
 ## Quick Start
 
-Download the latest [virtio-net driver installer](https://github.com/pmj/virtio-net-osx/raw/master/bin/Virtio-Net-Driver-0.9.4.pkg)
+Download the latest [virtio-net driver installer](https://github.com/pmj/virtio-net-osx/blob/main/bin/Virtio-Net-Driver-0.9.4.pkg)
 to your VirtualBox or Qemu virtual machine running OS X 10.7 or newer. Run the
 installer. If your VM has any virtio-net devices enabled, they should now
 spring into life!
